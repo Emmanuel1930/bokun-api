@@ -4,6 +4,10 @@ export default async function handler(req, res) {
   const accessKey = process.env.BOKUN_ACCESS_KEY;
   const secretKey = process.env.BOKUN_SECRET_KEY;
   
+  // --- 1. SETTINGS: SWITCH TO AED ---
+  const CURRENCY = "AED"; 
+  const LANG = "EN";
+
   const getHeaders = (method, path) => {
     const now = new Date();
     const year = now.getUTCFullYear();
@@ -26,14 +30,36 @@ export default async function handler(req, res) {
     };
   };
 
+  // --- HELPER: Slugify for Dynamic URLs ---
+  const slugify = (text) => {
+    if (!text) return "";
+    return text
+      .toString()
+      .toLowerCase()
+      .trim()
+      .replace(/\s+/g, '-')        // Replace spaces with -
+      .replace(/[^\w\-]+/g, '')    // Remove all non-word chars
+      .replace(/\-\-+/g, '-');     // Replace multiple - with single -
+  };
+
+  // --- HELPER: Smart Field Formatter (Prevents Crashes) ---
+  const formatHtmlField = (data) => {
+    if (!data) return "";
+    if (typeof data === 'string') return data; // Already HTML
+    if (Array.isArray(data)) {
+       return "<ul>" + data.map(i => `<li>${i.title || i}</li>`).join('') + "</ul>";
+    }
+    return "";
+  };
+
   try {
-    // 1. Search ALL Products
+    // STEP 1: Search ALL Products
     const searchPath = '/activity.json/search';
     const searchBody = JSON.stringify({
       "page": 1,
       "pageSize": 100, 
       "inLang": "en",
-      "currency": "ISK"
+      "currency": CURRENCY
     });
 
     const searchResponse = await fetch(`https://api.bokun.io${searchPath}`, {
@@ -45,9 +71,9 @@ export default async function handler(req, res) {
     if (!searchResponse.ok) throw new Error("Failed to search products");
     const searchData = await searchResponse.json();
     
-    // 2. Fetch Full Details
+    // STEP 2: Fetch Full Details for each
     const fullToursPromises = searchData.items.map(async (summary) => {
-      const detailPath = `/activity.json/${summary.id}?currency=ISK&lang=EN`;
+      const detailPath = `/activity.json/${summary.id}?currency=${CURRENCY}&lang=${LANG}`;
       const detailResponse = await fetch(`https://api.bokun.io${detailPath}`, {
         method: 'GET',
         headers: getHeaders('GET', detailPath)
@@ -58,38 +84,16 @@ export default async function handler(req, res) {
 
     const allToursDetails = (await Promise.all(fullToursPromises)).filter(t => t !== null);
 
-    // 3. MAP TO MATCH DUDA STRUCTURE
+    // STEP 3: Map to Duda Structure
     const dudaCollection = allToursDetails.map(item => {
       
-      // -- Helper: Handle Content that might be Array OR String --
-      const formatHtmlField = (data) => {
-        if (!data) return "";
-        // If it's already a string (HTML), just return it
-        if (typeof data === 'string') return data;
-        // If it's an array, convert to List
-        if (Array.isArray(data)) {
-           return "<ul>" + data.map(i => `<li>${i.title || i}</li>`).join('') + "</ul>";
-        }
-        return "";
-      };
-
-      // -- Helper: Build Location Object --
-      let locData = {};
-      if (item.startPoints && Array.isArray(item.startPoints) && item.startPoints.length > 0) {
-        locData = {
-           latitude: item.startPoints[0].latitude,
-           longitude: item.startPoints[0].longitude,
-           address: item.startPoints[0].address
-        };
-      }
-
-      // -- Helper: Build Duration Text --
+      // -- Duration Logic --
       let durationStr = "";
       if (item.durationWeeks) durationStr += `${item.durationWeeks} weeks `;
       if (item.durationDays) durationStr += `${item.durationDays} days `;
       if (item.durationHours) durationStr += `${item.durationHours} hours `;
 
-      // -- Helper: Itinerary HTML --
+      // -- Itinerary Logic --
       let itineraryHtml = "<p>No itinerary available.</p>";
       if (item.agendaItems && Array.isArray(item.agendaItems) && item.agendaItems.length > 0) {
         itineraryHtml = item.agendaItems.map(day => `
@@ -101,8 +105,26 @@ export default async function handler(req, res) {
         `).join('');
       }
 
+      // -- Location Logic (Matching Duda's Structure) --
+      const startPoint = (item.startPoints && item.startPoints.length > 0) ? item.startPoints[0] : {};
+      const locationObj = {
+        geo: {
+          latitude: startPoint.latitude || 0,
+          longitude: startPoint.longitude || 0
+        },
+        address: {
+          streetAddress: startPoint.address || "",
+          city: startPoint.city || "",
+          countryCode: startPoint.countryCode || ""
+        },
+        address_geolocation: startPoint.address || ""
+      };
+
       return {
-        // --- Core ID ---
+        // --- The Missing Piece: Dynamic URL Slug ---
+        "page_item_url": slugify(item.title), 
+
+        // --- Identification ---
         "id": item.id.toString(),
         "productCode": item.externalId || item.id.toString(),
         "supplier": item.vendor ? item.vendor.title : "Arabian Wanderers",
@@ -113,30 +135,27 @@ export default async function handler(req, res) {
         "excerpt": item.excerpt,
         "activityType": item.activityType || "Tour",
         
-        // --- Pricing & Details ---
+        // --- Price & Details (Now in AED) ---
         "defaultPrice": item.nextDefaultPriceMoney ? (item.nextDefaultPriceMoney.amount + " " + item.nextDefaultPriceMoney.currency) : "Check Price",
         "price": item.nextDefaultPriceMoney ? (item.nextDefaultPriceMoney.amount + " " + item.nextDefaultPriceMoney.currency) : "Check Price",
         "durationText": durationStr.trim(),
         "minAge": item.minAge ? `Minimum age: ${item.minAge}` : "",
         "difficultyLevel": item.difficultyLevel || "",
         
-        // --- Images & Media ---
+        // --- Media ---
         "keyPhoto": item.keyPhoto ? item.keyPhoto.originalUrl : "",
         "keyVideo": item.videos && Array.isArray(item.videos) && item.videos.length > 0 ? item.videos[0].url : "",
-        
-        // Safety check for photos array
         "otherPhotos": (item.photos && Array.isArray(item.photos)) ? item.photos.map(p => ({ originalUrl: p.originalUrl })) : [],
 
         // --- Location ---
-        "location_lat": locData.latitude,
-        "location_lng": locData.longitude,
-        "location_address": locData.address,
+        "location": locationObj,
 
-        // --- HTML Fields (Using the Smart Helper) ---
+        // --- HTML Fields (Safe & Smart) ---
         "itinerary_html": itineraryHtml,
         "included": formatHtmlField(item.included),   
         "excluded": formatHtmlField(item.excluded),   
-        "requirements": formatHtmlField(item.requirements)
+        "requirements": formatHtmlField(item.requirements),
+        "knowBeforeYouGo": formatHtmlField(item.knowBeforeYouGo)
       };
     });
 
