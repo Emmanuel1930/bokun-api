@@ -61,15 +61,21 @@ export default async function handler(req, res) {
     // 3. MAP TO MATCH DUDA STRUCTURE
     const dudaCollection = allToursDetails.map(item => {
       
-      // -- Helper: Convert HTML Lists --
-      const listToHtml = (arr) => {
-        if (!arr || arr.length === 0) return "";
-        return "<ul>" + arr.map(i => `<li>${i.title}</li>`).join('') + "</ul>";
+      // -- Helper: Handle Content that might be Array OR String --
+      const formatHtmlField = (data) => {
+        if (!data) return "";
+        // If it's already a string (HTML), just return it
+        if (typeof data === 'string') return data;
+        // If it's an array, convert to List
+        if (Array.isArray(data)) {
+           return "<ul>" + data.map(i => `<li>${i.title || i}</li>`).join('') + "</ul>";
+        }
+        return "";
       };
 
       // -- Helper: Build Location Object --
       let locData = {};
-      if (item.startPoints && item.startPoints.length > 0) {
+      if (item.startPoints && Array.isArray(item.startPoints) && item.startPoints.length > 0) {
         locData = {
            latitude: item.startPoints[0].latitude,
            longitude: item.startPoints[0].longitude,
@@ -85,7 +91,7 @@ export default async function handler(req, res) {
 
       // -- Helper: Itinerary HTML --
       let itineraryHtml = "<p>No itinerary available.</p>";
-      if (item.agendaItems && item.agendaItems.length > 0) {
+      if (item.agendaItems && Array.isArray(item.agendaItems) && item.agendaItems.length > 0) {
         itineraryHtml = item.agendaItems.map(day => `
           <div class="itinerary-day" style="margin-bottom: 20px;">
             <h4 style="color: #333; margin-bottom: 5px;">Day ${day.day}: ${day.title}</h4>
@@ -99,7 +105,7 @@ export default async function handler(req, res) {
         // --- Core ID ---
         "id": item.id.toString(),
         "productCode": item.externalId || item.id.toString(),
-        "supplier": item.vendor ? item.vendor.title : "Arabian Wanderers", // Default or fetch
+        "supplier": item.vendor ? item.vendor.title : "Arabian Wanderers",
         
         // --- Content ---
         "title": item.title,
@@ -116,23 +122,21 @@ export default async function handler(req, res) {
         
         // --- Images & Media ---
         "keyPhoto": item.keyPhoto ? item.keyPhoto.originalUrl : "",
-        "keyVideo": item.videos && item.videos.length > 0 ? item.videos[0].url : "",
-        "otherPhotos": item.photos ? item.photos.map(p => ({ originalUrl: p.originalUrl })) : [],
+        "keyVideo": item.videos && Array.isArray(item.videos) && item.videos.length > 0 ? item.videos[0].url : "",
+        
+        // Safety check for photos array
+        "otherPhotos": (item.photos && Array.isArray(item.photos)) ? item.photos.map(p => ({ originalUrl: p.originalUrl })) : [],
 
         // --- Location ---
         "location_lat": locData.latitude,
         "location_lng": locData.longitude,
         "location_address": locData.address,
 
-        // --- HTML Fields (Matching Duda's Rich Text) ---
+        // --- HTML Fields (Using the Smart Helper) ---
         "itinerary_html": itineraryHtml,
-        "included": listToHtml(item.included),   // Matches Duda's 'included' HTML field
-        "excluded": listToHtml(item.excluded),   // Matches Duda's 'excluded' HTML field
-        "requirements": listToHtml(item.requirements),
-
-        // --- Raw Arrays (Just in case you need them later) ---
-        "inclusions_raw": item.included,
-        "photos_raw": item.photos
+        "included": formatHtmlField(item.included),   
+        "excluded": formatHtmlField(item.excluded),   
+        "requirements": formatHtmlField(item.requirements)
       };
     });
 
