@@ -1,17 +1,24 @@
 import crypto from 'crypto';
 
 export default async function handler(req, res) {
-  // 1. Get Keys
   const accessKey = process.env.BOKUN_ACCESS_KEY;
   const secretKey = process.env.BOKUN_SECRET_KEY;
-  
-  // 2. CONFIGURATION (Added currency and language)
   const activityId = 852994; 
-  // IMPORTANT: The path MUST include the query parameters for the signature to match!
   const path = `/activity.json/${activityId}?currency=ISK&lang=EN`;
+
+  // --- FIX START: SPECIAL DATE FORMATTER ---
+  // Bokun requires "YYYY-MM-DD HH:mm:ss"
+  const now = new Date();
+  const year = now.getUTCFullYear();
+  const month = String(now.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(now.getUTCDate()).padStart(2, '0');
+  const hours = String(now.getUTCHours()).padStart(2, '0');
+  const minutes = String(now.getUTCMinutes()).padStart(2, '0');
+  const seconds = String(now.getUTCSeconds()).padStart(2, '0');
   
-  // 3. GENERATE SIGNATURE
-  const date = new Date().toUTCString();
+  const date = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+  // --- FIX END ---
+
   const httpMethod = 'GET';
   const stringToSign = date + accessKey + httpMethod + path;
 
@@ -21,7 +28,6 @@ export default async function handler(req, res) {
     .digest('base64');
 
   try {
-    // 4. CALL BÓKUN
     const response = await fetch(`https://api.bokun.io${path}`, {
       method: 'GET',
       headers: {
@@ -32,7 +38,6 @@ export default async function handler(req, res) {
       }
     });
 
-    // Better Error Handling: Read the actual message from Bokun
     if (!response.ok) {
       const errorText = await response.text(); 
       throw new Error(`Bokun API Error: ${response.status} - ${errorText}`);
@@ -40,10 +45,7 @@ export default async function handler(req, res) {
 
     const data = await response.json();
 
-    // 5. FORMAT ITINERARY (HTML)
     let itineraryHtml = "";
-    
-    // Check if agendaItems exists
     if (data.agendaItems && data.agendaItems.length > 0) {
       itineraryHtml = data.agendaItems.map(item => {
         return `
@@ -57,7 +59,6 @@ export default async function handler(req, res) {
         itineraryHtml = "<p>No itinerary details available.</p>";
     }
 
-    // 6. RETURN TO DUDA
     const dudaPayload = [
       {
         "id": data.id.toString(),
@@ -72,7 +73,6 @@ export default async function handler(req, res) {
     res.status(200).json(dudaPayload);
 
   } catch (error) {
-    // This will print the REAL error message from Bokun to your screen
     res.status(500).json({ error: error.message });
   }
 }
