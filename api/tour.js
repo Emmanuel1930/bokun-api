@@ -3,76 +3,106 @@ import crypto from 'crypto';
 export default async function handler(req, res) {
   const accessKey = process.env.BOKUN_ACCESS_KEY;
   const secretKey = process.env.BOKUN_SECRET_KEY;
-  const activityId = 852994; 
   
-  // 1. Keep the params to ensure we get the right language/currency
-  const path = `/activity.json/${activityId}?currency=ISK&lang=EN`;
+  // Helper: Bókun Signature Generator
+  const getHeaders = (method, path) => {
+    const now = new Date();
+    // Bókun needs YYYY-MM-DD HH:mm:ss
+    const year = now.getUTCFullYear();
+    const month = String(now.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(now.getUTCDate()).padStart(2, '0');
+    const hours = String(now.getUTCHours()).padStart(2, '0');
+    const minutes = String(now.getUTCMinutes()).padStart(2, '0');
+    const seconds = String(now.getUTCSeconds()).padStart(2, '0');
+    const dateStr = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
 
-  // 2. Date Format (Bokun requires YYYY-MM-DD HH:mm:ss)
-  const now = new Date();
-  const year = now.getUTCFullYear();
-  const month = String(now.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(now.getUTCDate()).padStart(2, '0');
-  const hours = String(now.getUTCHours()).padStart(2, '0');
-  const minutes = String(now.getUTCMinutes()).padStart(2, '0');
-  const seconds = String(now.getUTCSeconds()).padStart(2, '0');
-  
-  const date = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+    const stringToSign = dateStr + accessKey + method + path;
+    const signature = crypto.createHmac('sha1', secretKey).update(stringToSign).digest('base64');
 
-  const httpMethod = 'GET';
-  const stringToSign = date + accessKey + httpMethod + path;
-
-  // 3. THE FIX: Changed 'sha256' to 'sha1'
-  const signature = crypto
-    .createHmac('sha1', secretKey)  // <--- THIS WAS THE PROBLEM
-    .update(stringToSign)
-    .digest('base64');
+    return {
+      'X-Bokun-AccessKey': accessKey,
+      'X-Bokun-Date': dateStr,
+      'X-Bokun-Signature': signature,
+      'Accept': 'application/json',
+      'Content-Type': 'application/json'
+    };
+  };
 
   try {
-    const response = await fetch(`https://api.bokun.io${path}`, {
-      method: 'GET',
-      headers: {
-        'X-Bokun-AccessKey': accessKey,
-        'X-Bokun-Date': date,
-        'X-Bokun-Signature': signature,
-        'Accept': 'application/json'
-      }
+    // STEP 1: Search for ALL Products
+    const searchPath = '/activity.json/search';
+    const searchBody = JSON.stringify({
+      "page": 1,
+      "pageSize": 100, 
+      "inLang": "en",
+      "currency": "ISK"
     });
 
-    if (!response.ok) {
-      const errorText = await response.text(); 
-      throw new Error(`Bokun API Error: ${response.status} - ${errorText}`);
-    }
+    const searchResponse = await fetch(`https://api.bokun.io${searchPath}`, {
+      method: 'POST',
+      headers: getHeaders('POST', searchPath),
+      body: searchBody
+    });
 
-    const data = await response.json();
+    if (!searchResponse.ok) throw new Error("Failed to search products");
+    const searchData = await searchResponse.json();
+    
+    // STEP 2: Loop through every tour to get full details
+    const fullToursPromises = searchData.items.map(async (summary) => {
+      const detailPath = `/activity.json/${summary.id}?currency=ISK&lang=EN`;
+      
+      const detailResponse = await fetch(`https://api.bokun.io${detailPath}`, {
+        method: 'GET',
+        headers: getHeaders('GET', detailPath)
+      });
+      
+      if (!detailResponse.ok) return null; 
+      return detailResponse.json();
+    });
 
-    // 4. Format Itinerary
-    let itineraryHtml = "";
-    if (data.agendaItems && data.agendaItems.length > 0) {
-      itineraryHtml = data.agendaItems.map(item => {
-        return `
+    const allToursDetails = (await Promise.all(fullToursPromises)).filter(t => t !== null);
+
+    // STEP 3: Map Data (ONLY modifying Itinerary)
+    const dudaCollection = allToursDetails.map(item => {
+      
+      // -- A. CREATE CUSTOM ITINERARY HTML --
+      let itineraryHtml = "<p>No itinerary available.</p>";
+      if (item.agendaItems && item.agendaItems.length > 0) {
+        itineraryHtml = item.agendaItems.map(day => `
           <div class="itinerary-day" style="margin-bottom: 20px;">
-            <h3 style="color: #333; margin-bottom: 10px;">Day ${item.day}: ${item.title}</h3>
-            <div class="day-body">${item.body}</div>
+            <h4 style="color: #333; margin-bottom: 5px;">Day ${day.day}: ${day.title}</h4>
+            <div class="day-body">${day.body}</div>
           </div>
-          <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">`;
-      }).join('');
-    } else {
-        itineraryHtml = "<p>No itinerary details available.</p>";
-    }
-
-    const dudaPayload = [
-      {
-        "id": data.id.toString(),
-        "title": data.title,
-        "description": data.description, 
-        "price": data.nextDefaultPriceMoney ? (data.nextDefaultPriceMoney.amount + " " + data.nextDefaultPriceMoney.currency) : "Check Price",
-        "image": data.keyPhoto ? data.keyPhoto.originalUrl : "",
-        "itinerary_html": itineraryHtml 
+          <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
+        `).join('');
       }
-    ];
 
-    res.status(200).json(dudaPayload);
+      // -- B. RETURN OBJECT --
+      return {
+        // IDs
+        "id": item.id.toString(),
+        "productCode": item.externalId || item.id.toString(),
+        
+        // Basic Info
+        "title": item.title,
+        "description": item.description,
+        "excerpt": item.excerpt,
+        "price": item.nextDefaultPriceMoney ? (item.nextDefaultPriceMoney.amount + " " + item.nextDefaultPriceMoney.currency) : "Check Price",
+        "keyPhoto": item.keyPhoto ? item.keyPhoto.originalUrl : "",
+
+        // THE SPECIAL FIELD (Rich Text)
+        "itinerary_html": itineraryHtml,
+
+        // EVERYTHING ELSE IS RAW (Preserving Inner Collections)
+        "included": item.included,           // Kept as Array
+        "excluded": item.excluded,           // Kept as Array
+        "requirements": item.requirements,   // Kept as Array
+        "meetingPlaces": item.meetingPlaces, // Kept as Array
+        "photos": item.photos                // Kept as Array
+      };
+    });
+
+    res.status(200).json(dudaCollection);
 
   } catch (error) {
     res.status(500).json({ error: error.message });
