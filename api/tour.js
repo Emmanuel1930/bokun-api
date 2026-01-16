@@ -1,15 +1,16 @@
 import crypto from 'crypto';
 
 export default async function handler(req, res) {
-  // 1. YOUR CREDENTIALS (Set these in Vercel Environment Variables for safety)
+  // 1. Get Keys
   const accessKey = process.env.BOKUN_ACCESS_KEY;
   const secretKey = process.env.BOKUN_SECRET_KEY;
   
-  // 2. The specific product we want to test (Socotra)
+  // 2. CONFIGURATION (Added currency and language)
   const activityId = 852994; 
-  const path = `/activity.json/${activityId}`;
+  // IMPORTANT: The path MUST include the query parameters for the signature to match!
+  const path = `/activity.json/${activityId}?currency=ISK&lang=EN`;
   
-  // 3. GENERATE THE SIGNATURE (The "Math" Duda can't do)
+  // 3. GENERATE SIGNATURE
   const date = new Date().toUTCString();
   const httpMethod = 'GET';
   const stringToSign = date + accessKey + httpMethod + path;
@@ -31,42 +32,47 @@ export default async function handler(req, res) {
       }
     });
 
+    // Better Error Handling: Read the actual message from Bokun
     if (!response.ok) {
-      throw new Error(`Bokun API Error: ${response.status}`);
+      const errorText = await response.text(); 
+      throw new Error(`Bokun API Error: ${response.status} - ${errorText}`);
     }
 
     const data = await response.json();
 
-    // 5. THE MAGIC TRANSLATION (Format agendaItems for Duda)
-    // We create one single HTML string from the entire list
+    // 5. FORMAT ITINERARY (HTML)
     let itineraryHtml = "";
     
+    // Check if agendaItems exists
     if (data.agendaItems && data.agendaItems.length > 0) {
       itineraryHtml = data.agendaItems.map(item => {
         return `
-          <div class="itinerary-day">
-            <h3>Day ${item.day}: ${item.title}</h3>
+          <div class="itinerary-day" style="margin-bottom: 20px;">
+            <h3 style="color: #333; margin-bottom: 10px;">Day ${item.day}: ${item.title}</h3>
             <div class="day-body">${item.body}</div>
           </div>
-          <hr>`;
+          <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">`;
       }).join('');
+    } else {
+        itineraryHtml = "<p>No itinerary details available.</p>";
     }
 
-    // 6. RETURN TO DUDA (As a list, because Duda expects a Collection)
+    // 6. RETURN TO DUDA
     const dudaPayload = [
       {
         "id": data.id.toString(),
         "title": data.title,
-        "description": data.description,
-        "price": data.nextDefaultPriceMoney.amount + " " + data.nextDefaultPriceMoney.currency,
+        "description": data.description, 
+        "price": data.nextDefaultPriceMoney ? (data.nextDefaultPriceMoney.amount + " " + data.nextDefaultPriceMoney.currency) : "Check Price",
         "image": data.keyPhoto ? data.keyPhoto.originalUrl : "",
-        "itinerary_html": itineraryHtml // <--- THIS IS WHAT WE NEED
+        "itinerary_html": itineraryHtml 
       }
     ];
 
     res.status(200).json(dudaPayload);
 
   } catch (error) {
+    // This will print the REAL error message from Bokun to your screen
     res.status(500).json({ error: error.message });
   }
 }
