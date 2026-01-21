@@ -1,10 +1,26 @@
 import crypto from 'crypto';
 
 export default async function handler(req, res) {
+  // --- 1. ENABLE CORS PERMISSIONS (The Fix) ---
+  res.setHeader('Access-Control-Allow-Credentials', true);
+  res.setHeader('Access-Control-Allow-Origin', '*'); // This lets Duda (and any browser) talk to Vercel
+  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
+  );
+
+  // Handle the "Preflight" check immediately
+  if (req.method === 'OPTIONS') {
+    res.status(200).end();
+    return;
+  }
+  // -------------------------------------------
+
   const accessKey = process.env.BOKUN_ACCESS_KEY;
   const secretKey = process.env.BOKUN_SECRET_KEY;
   
-  // --- 1. SETTINGS: SWITCH TO AED ---
+  // --- 2. SETTINGS: SWITCH TO AED ---
   const CURRENCY = "AED"; 
   const LANG = "EN";
 
@@ -97,11 +113,11 @@ export default async function handler(req, res) {
       let itineraryHtml = "<p>No itinerary available.</p>";
       if (item.agendaItems && Array.isArray(item.agendaItems) && item.agendaItems.length > 0) {
         itineraryHtml = item.agendaItems.map(day => `
-          <div class="itinerary-day" style="margin-bottom: 20px;">
-            <h4 style="color: #333; margin-bottom: 5px;">Day ${day.day}: ${day.title}</h4>
+          <div class="itinerary-day-card">
+            <span class="day-badge">Day ${day.day}</span>
+            <div class="day-title">${day.title}</div>
             <div class="day-body">${day.body}</div>
           </div>
-          <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
         `).join('');
       }
 
