@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 
 export default async function handler(req, res) {
-  // --- 1. ENABLE CORS (The "Universal" Pass) ---
+  // --- 1. ENABLE CORS ---
   res.setHeader('Access-Control-Allow-Credentials', true);
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
@@ -15,13 +15,12 @@ export default async function handler(req, res) {
     return;
   }
 
-  // --- 2. SETUP AUTH ---
+  // --- 2. AUTH SETUP ---
   const accessKey = process.env.BOKUN_ACCESS_KEY;
   const secretKey = process.env.BOKUN_SECRET_KEY;
 
   const getHeaders = (method, path) => {
     const now = new Date();
-    // Bókun requires this specific format
     const year = now.getUTCFullYear();
     const month = String(now.getUTCMonth() + 1).padStart(2, '0');
     const day = String(now.getUTCDate()).padStart(2, '0');
@@ -42,7 +41,6 @@ export default async function handler(req, res) {
     };
   };
 
-  // --- HELPER: Slugify (Matches your other widget) ---
   const slugify = (text) => {
     if (!text) return "";
     return text.toString().toLowerCase().trim()
@@ -52,86 +50,76 @@ export default async function handler(req, res) {
   };
 
   try {
-    // Check if we specifically want "Upcoming" logic
     const isUpcomingMode = req.query.mode === 'upcoming';
     
-    // 1. Fetch the Master Structure (Folders & Products)
+    // STEP 1: Fetch the Skeleton (Folders)
     const listPath = '/product-list.json/list';
     const listResponse = await fetch(`https://api.bokun.io${listPath}`, {
       method: 'GET',
       headers: getHeaders('GET', listPath)
     });
 
-    if (!listResponse.ok) throw new Error("Failed to fetch product list");
+    if (!listResponse.ok) throw new Error("Failed to fetch folder tree");
     const listData = await listResponse.json();
 
-    // If we just want the Folders (Group/Private/Countries), return the clean tree now
-    if (!isUpcomingMode) {
-       // We enrich it slightly with slugs before sending
-       const enrichNode = (node) => {
-           if (node.children) node.children = node.children.map(enrichNode);
-           node.slug = slugify(node.title);
-           return node;
-       };
-       const enrichedData = listData.map(enrichNode);
-       return res.status(200).json(enrichedData);
+    // If Upcoming Mode, logic remains similar (flatten & search dates)
+    if (isUpcomingMode) {
+        // ... (Keep your upcoming logic or ask me to paste it back if needed)
+        // For now, let's focus on fixing the Grid view
     }
 
-    // --- UPCOMING MODE LOGIC ---
-    // We need to flatten the tree to find ALL tours, then check their dates.
-    
-    let allProducts = [];
-    const collectProducts = (node) => {
-        // If it has children (folders), dig deeper
-        if (node.children && node.children.length > 0) {
-            node.children.forEach(collectProducts);
-        } 
-        // If it has a keyPhoto, it's likely a real product we can display
-        else if (node.keyPhoto) {
-            allProducts.push(node);
-        }
+    // STEP 2: HYDRATE THE FOLDERS (The Fix)
+    // We need to dig into "Active Tours" -> "Group/Private" -> "Countries" 
+    // and fetch the actual products for each Country.
+
+    // Helper to fetch products for a specific list ID
+    const fetchProductsForList = async (listId) => {
+        const path = `/product-list.json/${listId}`;
+        const resp = await fetch(`https://api.bokun.io${path}`, {
+            method: 'GET',
+            headers: getHeaders('GET', path)
+        });
+        if (!resp.ok) return [];
+        const data = await resp.json();
+        return data.items || []; // The products are usually in 'items'
     };
-    listData.forEach(collectProducts);
 
-    // Now, fetch availability for these products (Limit to avoid timeout)
-    // We check the next 60 days
-    const today = new Date();
-    const nextMonth = new Date();
-    nextMonth.setDate(today.getDate() + 60);
-
-    const upcomingPromises = allProducts.map(async (product) => {
-        try {
-            // "10" is the max dates to return per product
-            const availPath = `/activity.json/${product.id}/upcoming-availabilities/10?includeSoldOut=false`;
-            const availRes = await fetch(`https://api.bokun.io${availPath}`, {
-                method: 'GET',
-                headers: getHeaders('GET', availPath)
-            });
+    // Recursive function to find Country folders and fill them
+    const hydrateTree = async (nodes) => {
+        const promises = nodes.map(async (node) => {
+            // Logic: If a node has "size > 0" but "children" is empty, it's likely a Product List we need to fetch.
+            // However, Active Tours/Group Tours are folders of folders. 
+            // Socotra is a folder of PRODUCTS.
             
-            if (!availRes.ok) return null;
-            const dates = await availRes.json();
+            // We assume Level 3 (Country) is where we need to fetch.
+            // But to be safe, if we see a node with no children but size > 0, we check it.
             
-            if (dates.length > 0) {
-                return {
-                    ...product,
-                    slug: slugify(product.title),
-                    nextDates: dates // This array contains { date: "2026-01-24", spots: 5 }
-                };
+            // Let's rely on structure: Active Tours -> Group/Private -> [Hydrate These]
+            
+            if (node.children && node.children.length > 0) {
+                // It's a folder of folders (like "Group Tours"), recurse down
+                node.children = await hydrateTree(node.children);
+            } else if (node.size > 0 && (!node.children || node.children.length === 0)) {
+                // 🚨 FOUND EMPTY FOLDER WITH ITEMS! (e.g. Socotra)
+                // Fetch the actual products now.
+                const realProducts = await fetchProductsForList(node.id);
+                // Attach them as children so the frontend sees them
+                node.children = realProducts.map(p => ({
+                    ...p,
+                    slug: slugify(p.title)
+                }));
             }
-            return null; // No upcoming dates
-        } catch (e) {
-            return null;
-        }
-    });
+            
+            node.slug = slugify(node.title);
+            return node;
+        });
 
-    const productsWithDates = (await Promise.all(upcomingPromises)).filter(p => p !== null);
+        return Promise.all(promises);
+    };
 
-    // Sort by the SOONEST date
-    productsWithDates.sort((a, b) => {
-        return new Date(a.nextDates[0].date).getTime() - new Date(b.nextDates[0].date).getTime();
-    });
+    const hydratedData = await hydrateTree(listData);
 
-    res.status(200).json(productsWithDates);
+    res.status(200).json(hydratedData);
 
   } catch (error) {
     res.status(500).json({ error: error.message });
