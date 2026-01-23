@@ -52,7 +52,7 @@ export default async function handler(req, res) {
   try {
     const isUpcomingMode = req.query.mode === 'upcoming';
     
-    // STEP 1: Fetch the Skeleton (Folders)
+    // FETCH ROOT LIST
     const listPath = '/product-list.json/list';
     const listResponse = await fetch(`https://api.bokun.io${listPath}`, {
       method: 'GET',
@@ -62,17 +62,75 @@ export default async function handler(req, res) {
     if (!listResponse.ok) throw new Error("Failed to fetch folder tree");
     const listData = await listResponse.json();
 
-    // If Upcoming Mode, logic remains similar (flatten & search dates)
+    // ==========================================
+    //  MODE A: UPCOMING TRIPS (Calendar Logic)
+    // ==========================================
     if (isUpcomingMode) {
-        // ... (Keep your upcoming logic or ask me to paste it back if needed)
-        // For now, let's focus on fixing the Grid view
+        // 1. Flatten the tree to find ALL products inside all folders
+        let allProducts = [];
+        
+        // Recursive function to extract products from folders
+        const collectProducts = (nodes) => {
+            nodes.forEach(node => {
+                if (node.children && node.children.length > 0) {
+                    collectProducts(node.children);
+                } 
+                // If it has a keyPhoto or an ID, we assume it might be a product
+                if (node.id && !node.children) {
+                    allProducts.push(node);
+                }
+            });
+        };
+        collectProducts(listData);
+
+        // 2. Check Availability for EVERY product found
+        // We limit to the next 90 days to keep it fast
+        const today = new Date();
+        const futureDate = new Date();
+        futureDate.setDate(today.getDate() + 90);
+        
+        // To prevent timeouts, we process in chunks or just Promise.all
+        const availabilityPromises = allProducts.map(async (product) => {
+            try {
+                // Fetch next 5 available dates
+                const availPath = `/activity.json/${product.id}/upcoming-availabilities/5?includeSoldOut=false`;
+                const availRes = await fetch(`https://api.bokun.io${availPath}`, {
+                    method: 'GET',
+                    headers: getHeaders('GET', availPath)
+                });
+                
+                if (!availRes.ok) return null;
+                const dates = await availRes.json();
+                
+                if (dates && dates.length > 0) {
+                    // It has dates! Return the product + the dates
+                    return {
+                        ...product,
+                        slug: slugify(product.title),
+                        nextDates: dates // Array of { date: "2026-01-24", spots: 5 }
+                    };
+                }
+                return null; 
+            } catch (e) {
+                return null;
+            }
+        });
+
+        // Wait for all checks to finish
+        const productsWithDates = (await Promise.all(availabilityPromises)).filter(p => p !== null);
+
+        // 3. Sort by the SOONEST date
+        productsWithDates.sort((a, b) => {
+            return new Date(a.nextDates[0].date).getTime() - new Date(b.nextDates[0].date).getTime();
+        });
+
+        return res.status(200).json(productsWithDates);
     }
 
-    // STEP 2: HYDRATE THE FOLDERS (The Fix)
-    // We need to dig into "Active Tours" -> "Group/Private" -> "Countries" 
-    // and fetch the actual products for each Country.
-
-    // Helper to fetch products for a specific list ID
+    // ==========================================
+    //  MODE B: STANDARD FOLDERS (Hydration Logic)
+    // ==========================================
+    
     const fetchProductsForList = async (listId) => {
         const path = `/product-list.json/${listId}`;
         const resp = await fetch(`https://api.bokun.io${path}`, {
@@ -81,44 +139,28 @@ export default async function handler(req, res) {
         });
         if (!resp.ok) return [];
         const data = await resp.json();
-        return data.items || []; // The products are usually in 'items'
+        return data.items || []; 
     };
 
-    // Recursive function to find Country folders and fill them
     const hydrateTree = async (nodes) => {
         const promises = nodes.map(async (node) => {
-            // Logic: If a node has "size > 0" but "children" is empty, it's likely a Product List we need to fetch.
-            // However, Active Tours/Group Tours are folders of folders. 
-            // Socotra is a folder of PRODUCTS.
-            
-            // We assume Level 3 (Country) is where we need to fetch.
-            // But to be safe, if we see a node with no children but size > 0, we check it.
-            
-            // Let's rely on structure: Active Tours -> Group/Private -> [Hydrate These]
-            
             if (node.children && node.children.length > 0) {
-                // It's a folder of folders (like "Group Tours"), recurse down
                 node.children = await hydrateTree(node.children);
             } else if (node.size > 0 && (!node.children || node.children.length === 0)) {
-                // 🚨 FOUND EMPTY FOLDER WITH ITEMS! (e.g. Socotra)
-                // Fetch the actual products now.
+                // Fetch missing products for this folder
                 const realProducts = await fetchProductsForList(node.id);
-                // Attach them as children so the frontend sees them
                 node.children = realProducts.map(p => ({
                     ...p,
                     slug: slugify(p.title)
                 }));
             }
-            
             node.slug = slugify(node.title);
             return node;
         });
-
         return Promise.all(promises);
     };
 
     const hydratedData = await hydrateTree(listData);
-
     res.status(200).json(hydratedData);
 
   } catch (error) {
