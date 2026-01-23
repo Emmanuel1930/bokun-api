@@ -21,8 +21,8 @@ export default async function handler(req, res) {
 
   const getHeaders = (method, path) => {
     const now = new Date();
-    const dateStr = now.toISOString().replace(/\.\d{3}Z$/, '').replace(/T/, ' ') + 'Z'; 
-    // Note: Bókun is picky about date format, sticking to the manual construction that worked previously is safer:
+    const dateStr = now.toISOString().replace(/\.\d{3}Z$/, '').replace(/T/, ' ') + 'Z';
+    // Bókun-specific legacy format just in case
     const year = now.getUTCFullYear();
     const month = String(now.getUTCMonth() + 1).padStart(2, '0');
     const day = String(now.getUTCDate()).padStart(2, '0');
@@ -63,7 +63,7 @@ export default async function handler(req, res) {
     if (!listResponse.ok) throw new Error("Failed to fetch folder tree");
     const listData = await listResponse.json();
 
-    // 2. DEFINE HYDRATION LOGIC (Fetch items inside folders)
+    // 2. DEFINE HYDRATION LOGIC
     const fetchProductsForList = async (listId) => {
         const path = `/product-list.json/${listId}`;
         const resp = await fetch(`https://api.bokun.io${path}`, {
@@ -75,15 +75,21 @@ export default async function handler(req, res) {
         return data.items || [];
     };
 
-    const hydrateTree = async (nodes) => {
+    const hydrateTree = async (nodes, onlyGroupTours = false) => {
         const promises = nodes.map(async (node) => {
+            // OPTIMIZATION: If we only want upcoming, SKIP anything that isn't "Active Tours" or "Group Tours"
+            if (onlyGroupTours) {
+                 if (node.title === "Private Tours" || node.title === "School Trips") {
+                     return node; // Skip hydrating these
+                 }
+            }
+
             if (node.children && node.children.length > 0) {
-                node.children = await hydrateTree(node.children);
+                node.children = await hydrateTree(node.children, onlyGroupTours);
             } else if (node.size > 0 && (!node.children || node.children.length === 0)) {
-                // Fetch the actual products
+                // Fetch products
                 const realProducts = await fetchProductsForList(node.id);
                 node.children = realProducts.map(p => {
-                    // Unwrap activity if needed immediately
                     const productData = p.activity || p;
                     return {
                         ...productData,
@@ -96,41 +102,49 @@ export default async function handler(req, res) {
         return Promise.all(promises);
     };
 
-    // 3. EXECUTE HYDRATION (Crucial for BOTH modes)
-    // We must do this first so we actually have products to check availability on
-    const hydratedData = await hydrateTree(listData);
+    // 3. EXECUTE SMART HYDRATION
+    // If upcoming mode, we pass 'true' to only hydrate Group Tours
+    const hydratedData = await hydrateTree(listData, isUpcomingMode);
 
-    // 4. IF STANDARD MODE: RETURN TREE
+    // 4. STANDARD MODE RETURN
     if (!isUpcomingMode) {
         return res.status(200).json(hydratedData);
     }
 
-    // 5. IF UPCOMING MODE: FLATTEN & CHECK DATES
+    // 5. UPCOMING MODE: FAST SCAN
     if (isUpcomingMode) {
-        let allProducts = [];
-        const collect = (nodes) => {
-            nodes.forEach(node => {
-                if (node.children && node.children.length > 0) {
-                    collect(node.children);
-                } 
-                // Since we hydrated, 'node' might be a Folder or a Product.
-                // Products usually have an 'id' and 'title', but NOT 'children'.
-                // To be safe, we check if it has an ID and NO children.
-                else if (node.id && (!node.children || node.children.length === 0)) {
-                    allProducts.push(node);
-                }
-            });
+        let groupProducts = [];
+        
+        // Helper to find "Group Tours" specifically
+        const findGroupFolder = (nodes) => {
+            for (const node of nodes) {
+                if (node.title === "Active Tours") return findGroupFolder(node.children);
+                if (node.title === "Group Tours") return node;
+            }
+            return null;
         };
-        collect(hydratedData);
 
-        // Check availability
-        const availabilityPromises = allProducts.map(async (product) => {
+        const groupFolder = findGroupFolder(hydratedData);
+        
+        if (groupFolder) {
+            // Collect all products inside Group Tours (recursively)
+            const collect = (nodes) => {
+                nodes.forEach(node => {
+                    if (node.children && node.children.length > 0) collect(node.children);
+                    else if (node.id) groupProducts.push(node);
+                });
+            };
+            collect(groupFolder.children || []);
+        }
+
+        // Check availability ONLY for these Group Products
+        const availabilityPromises = groupProducts.map(async (product) => {
             try {
-                // Use the correct ID (some products are wrapped, but we unwrapped them in hydration)
                 const productId = product.id; 
                 if (!productId) return null;
 
-                const availPath = `/activity.json/${productId}/upcoming-availabilities/5?includeSoldOut=false`;
+                // Limit to 10 upcoming dates to reduce payload
+                const availPath = `/activity.json/${productId}/upcoming-availabilities/10?includeSoldOut=false`;
                 const availRes = await fetch(`https://api.bokun.io${availPath}`, {
                     method: 'GET',
                     headers: getHeaders('GET', availPath)
@@ -153,12 +167,29 @@ export default async function handler(req, res) {
 
         const productsWithDates = (await Promise.all(availabilityPromises)).filter(p => p !== null);
 
-        // Sort by Date
-        productsWithDates.sort((a, b) => {
-            return new Date(a.nextDates[0].date).getTime() - new Date(b.nextDates[0].date).getTime();
+        // 6. EXPAND DATES (The "Elfsight" Grouping Trick)
+        // Instead of returning 1 product with 5 dates, we create 1 entry PER DATE
+        // This allows sorting by date in the calendar view.
+        let calendarEntries = [];
+        
+        productsWithDates.forEach(product => {
+            product.nextDates.forEach(dateEntry => {
+                calendarEntries.push({
+                    ...product,
+                    // Overwrite the 'nextDates' array with THIS specific date for the card
+                    specificDate: dateEntry.date, 
+                    spotsLeft: dateEntry.availabilityCount
+                });
+            });
         });
 
-        return res.status(200).json(productsWithDates);
+        // Sort by Date
+        calendarEntries.sort((a, b) => {
+            return new Date(a.specificDate).getTime() - new Date(b.specificDate).getTime();
+        });
+
+        // Return the clean, flattened calendar list
+        return res.status(200).json(calendarEntries);
     }
 
   } catch (error) {
