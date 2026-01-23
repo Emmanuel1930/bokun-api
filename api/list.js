@@ -14,6 +14,7 @@ export default async function handler(req, res) {
 
   const getHeaders = (method, path) => {
     const now = new Date();
+    // Force UTC format to ensure API compatibility
     const cleanDateStr = now.toISOString().replace(/\.\d{3}Z$/, '').replace(/T/, ' ') + 'Z';
     const stringToSign = cleanDateStr + accessKey + method + path;
     const signature = crypto.createHmac('sha1', secretKey).update(stringToSign).digest('base64');
@@ -31,13 +32,13 @@ export default async function handler(req, res) {
   try {
     const isUpcomingMode = req.query.mode === 'upcoming';
     
-    // 1. FETCH FOLDERS
+    // 1. FETCH FOLDER STRUCTURE
     const listPath = '/product-list.json/list';
     const listRes = await fetch(`https://api.bokun.io${listPath}`, { method: 'GET', headers: getHeaders('GET', listPath) });
     if (!listRes.ok) throw new Error("Failed to fetch folder tree");
     const listData = await listRes.json();
 
-    // 2. HYDRATION LOGIC
+    // 2. HYDRATION LOGIC (Opens folders to find products)
     const fetchProductsForList = async (listId) => {
         const path = `/product-list.json/${listId}`;
         const resp = await fetch(`https://api.bokun.io${path}`, { method: 'GET', headers: getHeaders('GET', path) });
@@ -47,7 +48,7 @@ export default async function handler(req, res) {
 
     const hydrateTree = async (nodes, onlyGroupTours = false) => {
         const promises = nodes.map(async (node) => {
-            // OPTIMIZATION: Skip unnecessary folders
+            // OPTIMIZATION: Skip unnecessary folders in Upcoming Mode
             if (onlyGroupTours && (node.title.includes("Private") || node.title.includes("School"))) return node; 
 
             if (node.children?.length > 0) {
@@ -66,6 +67,7 @@ export default async function handler(req, res) {
 
     const hydratedData = await hydrateTree(listData, isUpcomingMode);
     
+    // If Standard Mode, return the tree immediately
     if (!isUpcomingMode) return res.status(200).json(hydratedData);
 
     // 3. UPCOMING MODE (Smart Range & Deduplication)
@@ -96,13 +98,13 @@ export default async function handler(req, res) {
         if (groupFolder) collect(groupFolder.children || []);
         else collect(hydratedData); 
 
-        // DEFINE DATE RANGE: Today to 6 Months Ahead
+        // DEFINE DATE RANGE: Today to 12 MONTHS Ahead
         const today = new Date();
-        const sixMonthsLater = new Date();
-        sixMonthsLater.setMonth(today.getMonth() + 6);
+        const futureDate = new Date();
+        futureDate.setMonth(today.getMonth() + 12); // <--- FETCHES 1 YEAR
         
         const startStr = today.toISOString().split('T')[0];
-        const endStr = sixMonthsLater.toISOString().split('T')[0];
+        const endStr = futureDate.toISOString().split('T')[0];
 
         const productsToCheck = Array.from(uniqueProducts.values());
 
@@ -110,7 +112,7 @@ export default async function handler(req, res) {
         const availabilityPromises = productsToCheck.map(async (product) => {
             try {
                 if (!product.id) return null;
-                // NEW ENDPOINT: Fetch by Date Range (Much lighter on the server)
+                // NEW ENDPOINT: Fetch by Date Range
                 const availPath = `/activity.json/${product.id}/availabilities?start=${startStr}&end=${endStr}&includeSoldOut=false`;
                 const availRes = await fetch(`https://api.bokun.io${availPath}`, { method: 'GET', headers: getHeaders('GET', availPath) });
                 const dates = await availRes.json();
