@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 
 export default async function handler(req, res) {
+  // --- CORS HEADERS ---
   res.setHeader('Access-Control-Allow-Credentials', true);
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
@@ -17,7 +18,11 @@ export default async function handler(req, res) {
     const stringToSign = cleanDateStr + accessKey + method + path;
     const signature = crypto.createHmac('sha1', secretKey).update(stringToSign).digest('base64');
     return {
-      'X-Bokun-AccessKey': accessKey, 'X-Bokun-Date': cleanDateStr, 'X-Bokun-Signature': signature, 'Accept': 'application/json', 'Content-Type': 'application/json'
+      'X-Bokun-AccessKey': accessKey, 
+      'X-Bokun-Date': cleanDateStr, 
+      'X-Bokun-Signature': signature, 
+      'Accept': 'application/json', 
+      'Content-Type': 'application/json'
     };
   };
 
@@ -26,13 +31,13 @@ export default async function handler(req, res) {
   try {
     const isUpcomingMode = req.query.mode === 'upcoming';
     
-    // 1. FETCH FOLDER STRUCTURE
+    // 1. FETCH FOLDERS
     const listPath = '/product-list.json/list';
     const listRes = await fetch(`https://api.bokun.io${listPath}`, { method: 'GET', headers: getHeaders('GET', listPath) });
     if (!listRes.ok) throw new Error("Failed to fetch folder tree");
     const listData = await listRes.json();
 
-    // 2. HYDRATION
+    // 2. HYDRATION LOGIC
     const fetchProductsForList = async (listId) => {
         const path = `/product-list.json/${listId}`;
         const resp = await fetch(`https://api.bokun.io${path}`, { method: 'GET', headers: getHeaders('GET', path) });
@@ -42,6 +47,7 @@ export default async function handler(req, res) {
 
     const hydrateTree = async (nodes, onlyGroupTours = false) => {
         const promises = nodes.map(async (node) => {
+            // OPTIMIZATION: Skip unnecessary folders
             if (onlyGroupTours && (node.title.includes("Private") || node.title.includes("School"))) return node; 
 
             if (node.children?.length > 0) {
@@ -59,12 +65,12 @@ export default async function handler(req, res) {
     };
 
     const hydratedData = await hydrateTree(listData, isUpcomingMode);
+    
     if (!isUpcomingMode) return res.status(200).json(hydratedData);
 
-    // 3. UPCOMING MODE (Group Tours Only + Deduplication)
+    // 3. UPCOMING MODE (Smart Range & Deduplication)
     if (isUpcomingMode) {
-        // Use a Map to ensure each Product ID is only collected ONCE
-        let uniqueProducts = new Map();
+        let uniqueProducts = new Map(); // Prevents Duplicates
         
         const findGroupFolder = (nodes) => {
             for (const node of nodes) {
@@ -79,7 +85,7 @@ export default async function handler(req, res) {
             nodes.forEach(node => {
                 if (node.children?.length > 0) collect(node.children);
                 else if (node.id) {
-                    // THE FIX: Only add if we haven't seen this ID yet
+                     // DEDUPLICATION: Only add if we haven't seen this ID
                     if (!uniqueProducts.has(node.id)) {
                         uniqueProducts.set(node.id, node);
                     }
@@ -90,18 +96,22 @@ export default async function handler(req, res) {
         if (groupFolder) collect(groupFolder.children || []);
         else collect(hydratedData); 
 
+        // DEFINE DATE RANGE: Today to 6 Months Ahead
         const today = new Date();
-        const cutoffDate = new Date(); 
-        cutoffDate.setDate(today.getDate() - 1); 
+        const sixMonthsLater = new Date();
+        sixMonthsLater.setMonth(today.getMonth() + 6);
+        
+        const startStr = today.toISOString().split('T')[0];
+        const endStr = sixMonthsLater.toISOString().split('T')[0];
 
-        // Convert Map back to Array for processing
         const productsToCheck = Array.from(uniqueProducts.values());
 
+        // FETCH AVAILABILITY (Using Range = Faster)
         const availabilityPromises = productsToCheck.map(async (product) => {
             try {
                 if (!product.id) return null;
-                // Increased limit to 50 to ensure we catch Socotra dates even if listed late
-                const availPath = `/activity.json/${product.id}/upcoming-availabilities/50?includeSoldOut=false`;
+                // NEW ENDPOINT: Fetch by Date Range (Much lighter on the server)
+                const availPath = `/activity.json/${product.id}/availabilities?start=${startStr}&end=${endStr}&includeSoldOut=false`;
                 const availRes = await fetch(`https://api.bokun.io${availPath}`, { method: 'GET', headers: getHeaders('GET', availPath) });
                 const dates = await availRes.json();
                 
@@ -112,32 +122,41 @@ export default async function handler(req, res) {
 
         const productsWithDates = (await Promise.all(availabilityPromises)).filter(p => p !== null);
 
+        // 4. FLATTEN & CALCULATE
         let calendarEntries = [];
         
+        // Timezone Buffer
+        const cutoffDate = new Date(); 
+        cutoffDate.setDate(today.getDate() - 1); 
+
         productsWithDates.forEach(product => {
             product.nextDates.forEach(dateEntry => {
-                const startDate = new Date(dateEntry.date);
+                // Ensure date format matches YYYY-MM-DD
+                const rawDate = dateEntry.date || dateEntry.startTime.split('T')[0];
+                const startDate = new Date(rawDate);
+                
                 if (startDate < cutoffDate) return;
 
-                // Date Math Logic
+                // Date Math
                 let endDate = new Date(startDate);
                 let daysToAdd = 0;
                 
                 if (product.durationWeeks) daysToAdd = (product.durationWeeks * 7) - 1;
                 else if (product.durationDays) daysToAdd = product.durationDays - 1;
                 
-                if (daysToAdd < 0) daysToAdd = 0; // Safety for 0-day configs
+                if (daysToAdd < 0) daysToAdd = 0; 
                 endDate.setDate(startDate.getDate() + daysToAdd);
 
                 calendarEntries.push({
                     ...product,
-                    startDate: dateEntry.date,
+                    startDate: rawDate,
                     endDate: endDate.toISOString().split('T')[0], 
                     spotsLeft: dateEntry.availabilityCount
                 });
             });
         });
 
+        // Sort by Date
         calendarEntries.sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
         
         return res.status(200).json(calendarEntries);
