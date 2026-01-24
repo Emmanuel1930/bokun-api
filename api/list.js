@@ -24,56 +24,84 @@ export default async function handler(req, res) {
 
   const slugify = (text) => text ? text.toString().toLowerCase().trim().replace(/\s+/g, '-').replace(/[^\w\-]+/g, '').replace(/\-\-+/g, '-') : "";
 
+  // --- 🖼️ IMAGE OPTIMIZER HELPER ---
+  const getBestImage = (activity) => {
+      // 1. Try to find a photo source (KeyPhoto OR First Gallery Photo)
+      let photo = activity.keyPhoto;
+      if (!photo && activity.photos && activity.photos.length > 0) {
+          photo = activity.photos[0]; // Fallback if keyPhoto is missing
+      }
+
+      if (!photo) return 'https://via.placeholder.com/600x400?text=No+Image';
+
+      // 2. Try to find the "Large" (660px) or "Preview" (300px) derived version
+      // This makes the website load 10x faster
+      if (photo.derived) {
+          const large = photo.derived.find(d => d.name === 'large');
+          if (large) return large.cleanUrl;
+          
+          const preview = photo.derived.find(d => d.name === 'preview');
+          if (preview) return preview.cleanUrl;
+      }
+
+      // 3. Fallback to original, but force resize via URL params
+      const baseUrl = photo.cleanUrl || photo.originalUrl;
+      return baseUrl.includes('?') ? `${baseUrl}&w=600` : `${baseUrl}?w=600`;
+  };
+
   try {
     const isUpcomingMode = req.query.mode === 'upcoming';
     
-    // 1. FETCH FOLDER STRUCTURE (Organized Lists)
+    // 1. FETCH FOLDER STRUCTURE
     const listPath = '/product-list.json/list';
     const listRes = await fetch(`https://api.bokun.io${listPath}`, { method: 'GET', headers: getHeaders('GET', listPath) });
     if (!listRes.ok) throw new Error("Failed to fetch folder tree");
     const rootTree = await listRes.json();
 
-    // Helper: Fetch items in a specific list
+    // Helper: Fetch items & Optimize Images
     const fetchProductsForList = async (listId) => {
         try {
             const path = `/product-list.json/${listId}`;
             const resp = await fetch(`https://api.bokun.io${path}`, { method: 'GET', headers: getHeaders('GET', path) });
             const data = await resp.json();
             return (data.items || []).map(item => {
-                if (item.activity) return { ...item.activity, slug: slugify(item.activity.title) };
+                if (item.activity) { 
+                    // Attach the Optimized Image URL directly to the object
+                    return { 
+                        ...item.activity, 
+                        slug: slugify(item.activity.title),
+                        optimizedImage: getBestImage(item.activity) // <--- NEW FIELD
+                    };
+                }
                 return null;
             }).filter(item => item !== null);
         } catch (e) { return []; }
     };
 
-    // 2. EXPAND THE TREE (Standard Logic)
-    let foundProductIds = new Set(); // Track IDs we found in folders
+    // 2. EXPAND THE TREE
+    let foundProductIds = new Set(); 
 
     const expandNode = async (node) => {
         if (node.children && node.children.length > 0) {
             node.children = await Promise.all(node.children.map(child => expandNode(child)));
         }
         
-        // Always try to fetch products for this node
         if (node.id) {
             const directProducts = await fetchProductsForList(node.id);
             if (directProducts.length > 0) {
                 if (!node.children) node.children = [];
                 node.children = node.children.concat(directProducts);
-                // Mark these IDs as "Found"
                 directProducts.forEach(p => foundProductIds.add(p.id));
             }
         }
         return node;
     };
 
-    // Hydrate the user's organized lists
     let hydratedData = await Promise.all(rootTree.map(node => expandNode(node)));
 
-    // 3. THE SAFETY NET: Fetch ALL Products (Unlisted Check) 🛡️
-    // We use the "Search" endpoint to grab everything in the account
+    // 3. THE SAFETY NET: Fetch ALL Products
     const searchPath = '/activity.json/search';
-    const searchBody = JSON.stringify({ "page": 1, "pageSize": 1000 }); // Fetch up to 1000 items
+    const searchBody = JSON.stringify({ "page": 1, "pageSize": 1000 }); 
     
     const searchRes = await fetch(`https://api.bokun.io${searchPath}`, { 
         method: 'POST', 
@@ -85,25 +113,23 @@ export default async function handler(req, res) {
         const searchData = await searchRes.json();
         const allProducts = searchData.results || []; 
 
-        // Find products that match our criteria but were NOT in any folder
         const unlistedProducts = allProducts.filter(p => {
-            // Must be active + Not already found
             return !foundProductIds.has(p.id) && p.active === true; 
-        }).map(p => ({ ...p, slug: slugify(p.title) }));
+        }).map(p => ({ 
+            ...p, 
+            slug: slugify(p.title),
+            optimizedImage: getBestImage(p) // <--- NEW FIELD for unlisted items too
+        }));
 
-        // If we found orphans, create a special "Unlisted" folder for them
         if (unlistedProducts.length > 0) {
             const activeToursNode = hydratedData.find(n => n.title === "Active Tours");
-            
-            // Create the Unlisted Folder with a "Magical Name" that matches keywords
             const unlistedNode = {
-                id: 999999, // Fake ID
-                title: "Unlisted Group & Private Tours", // Matches both keywords!
+                id: 999999, 
+                title: "Unlisted Group & Private Tours", 
                 children: unlistedProducts,
                 size: unlistedProducts.length
             };
 
-            // Inject it into "Active Tours" if possible, otherwise Root
             if (activeToursNode) {
                 if (!activeToursNode.children) activeToursNode.children = [];
                 activeToursNode.children.push(unlistedNode);
@@ -169,7 +195,8 @@ export default async function handler(req, res) {
                     ...product,
                     startDate: rawDate,
                     endDate: endDate.toISOString().split('T')[0], 
-                    spotsLeft: dateEntry.availabilityCount
+                    spotsLeft: dateEntry.availabilityCount,
+                    optimizedImage: product.optimizedImage // Ensure image passes through
                 });
             });
         });
