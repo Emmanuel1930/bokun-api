@@ -1,6 +1,10 @@
 import crypto from 'crypto';
 
 export default async function handler(req, res) {
+  // --- ⚡ LAYER A: SERVER CACHE (1 HOUR) ---
+  // This tells Vercel: "Save this response. Don't call Bokun again for 3600 seconds."
+  res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=59');
+
   // --- CORS HEADERS ---
   res.setHeader('Access-Control-Allow-Credentials', true);
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -26,25 +30,18 @@ export default async function handler(req, res) {
 
   // --- 🖼️ IMAGE OPTIMIZER HELPER ---
   const getBestImage = (activity) => {
-      // 1. Try to find a photo source (KeyPhoto OR First Gallery Photo)
       let photo = activity.keyPhoto;
       if (!photo && activity.photos && activity.photos.length > 0) {
-          photo = activity.photos[0]; // Fallback if keyPhoto is missing
+          photo = activity.photos[0]; 
       }
-
       if (!photo) return 'https://via.placeholder.com/600x400?text=No+Image';
 
-      // 2. Try to find the "Large" (660px) or "Preview" (300px) derived version
-      // This makes the website load 10x faster
       if (photo.derived) {
           const large = photo.derived.find(d => d.name === 'large');
           if (large) return large.cleanUrl;
-          
           const preview = photo.derived.find(d => d.name === 'preview');
           if (preview) return preview.cleanUrl;
       }
-
-      // 3. Fallback to original, but force resize via URL params
       const baseUrl = photo.cleanUrl || photo.originalUrl;
       return baseUrl.includes('?') ? `${baseUrl}&w=600` : `${baseUrl}?w=600`;
   };
@@ -66,11 +63,10 @@ export default async function handler(req, res) {
             const data = await resp.json();
             return (data.items || []).map(item => {
                 if (item.activity) { 
-                    // Attach the Optimized Image URL directly to the object
                     return { 
                         ...item.activity, 
                         slug: slugify(item.activity.title),
-                        optimizedImage: getBestImage(item.activity) // <--- NEW FIELD
+                        optimizedImage: getBestImage(item.activity)
                     };
                 }
                 return null;
@@ -118,7 +114,7 @@ export default async function handler(req, res) {
         }).map(p => ({ 
             ...p, 
             slug: slugify(p.title),
-            optimizedImage: getBestImage(p) // <--- NEW FIELD for unlisted items too
+            optimizedImage: getBestImage(p) 
         }));
 
         if (unlistedProducts.length > 0) {
