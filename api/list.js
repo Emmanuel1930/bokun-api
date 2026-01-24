@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 
 export default async function handler(req, res) {
-  // --- ⚡ LAYER A: SERVER CACHE ---
+  // --- ⚡ LAYER A: SERVER CACHE (1 HOUR) ---
   res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=59');
 
   // --- CORS HEADERS ---
@@ -46,40 +46,31 @@ export default async function handler(req, res) {
   // --- ✂️ DATA TRIMMER (Reduce Payload Size) ---
   const cleanProduct = (p) => {
       if (!p) return null;
-      // We only keep essential fields. This reduces file size by ~60%
       return {
           id: p.id,
           title: p.title,
           slug: slugify(p.title),
           optimizedImage: getBestImage(p),
-          nextDefaultPriceMoney: p.nextDefaultPriceMoney, // For price
+          nextDefaultPriceMoney: p.nextDefaultPriceMoney, 
           durationWeeks: p.durationWeeks,
           durationDays: p.durationDays,
           durationHours: p.durationHours,
           locationCode: p.locationCode,
           googlePlace: p.googlePlace,
-          active: p.active
+          active: p.active,
+          startDate: p.startDate, // Ensure dates pass through if available
+          endDate: p.endDate 
       };
   };
 
   try {
     const isUpcomingMode = req.query.mode === 'upcoming';
     
-    // 1. START BOTH TASKS IMMEDIATELY (Parallel Start) 🚀
-    // Task A: Get the Folder List
+    // 1. FETCH FOLDER STRUCTURE 📂
     const listPath = '/product-list.json/list';
-    const foldersPromise = fetch(`https://api.bokun.io${listPath}`, { method: 'GET', headers: getHeaders('GET', listPath) })
-        .then(r => r.ok ? r.json() : []);
-
-    // Task B: The Safety Net (Fetch ALL products)
-    const searchPath = '/activity.json/search';
-    const searchBody = JSON.stringify({ "page": 1, "pageSize": 1000 }); 
-    const searchPromise = fetch(`https://api.bokun.io${searchPath}`, { 
-        method: 'POST', headers: getHeaders('POST', searchPath), body: searchBody 
-    }).then(r => r.ok ? r.json() : { results: [] });
-
-    // 2. WAIT FOR FOLDERS FIRST (We need structure)
-    const rootTree = await foldersPromise;
+    const listRes = await fetch(`https://api.bokun.io${listPath}`, { method: 'GET', headers: getHeaders('GET', listPath) });
+    if (!listRes.ok) throw new Error("Failed to fetch folder tree");
+    const rootTree = await listRes.json();
 
     // Helper: Fetch items for a list
     const fetchProductsForList = async (listId) => {
@@ -88,15 +79,13 @@ export default async function handler(req, res) {
             const resp = await fetch(`https://api.bokun.io${path}`, { method: 'GET', headers: getHeaders('GET', path) });
             const data = await resp.json();
             return (data.items || []).map(item => {
-                if (item.activity) return cleanProduct(item.activity); // Trim Data
+                if (item.activity) return cleanProduct(item.activity); 
                 return null;
             }).filter(item => item !== null);
         } catch (e) { return []; }
     };
 
-    // 3. EXPAND FOLDERS
-    let foundProductIds = new Set(); 
-
+    // 2. EXPAND FOLDERS 🌲
     const expandNode = async (node) => {
         if (node.children && node.children.length > 0) {
             node.children = await Promise.all(node.children.map(child => expandNode(child)));
@@ -106,7 +95,6 @@ export default async function handler(req, res) {
             if (directProducts.length > 0) {
                 if (!node.children) node.children = [];
                 node.children = node.children.concat(directProducts);
-                directProducts.forEach(p => foundProductIds.add(p.id));
             }
         }
         return node;
@@ -115,36 +103,12 @@ export default async function handler(req, res) {
     // Run folder expansion
     let hydratedData = await Promise.all(rootTree.map(node => expandNode(node)));
 
-    // 4. PROCESS SAFETY NET (Wait for the search we started in Step 1)
-    const searchData = await searchPromise; // It likely finished while we were processing folders! ⚡
-    const allProducts = searchData.results || []; 
+    // ❌ REMOVED: "Step 3 Safety Net" (The code stops searching here) 
 
-    const unlistedProducts = allProducts.filter(p => {
-        return !foundProductIds.has(p.id) && p.active === true; 
-    }).map(p => cleanProduct(p)); // Trim Data
-
-    if (unlistedProducts.length > 0) {
-        const activeToursNode = hydratedData.find(n => n.title === "Active Tours");
-        const unlistedNode = {
-            id: 999999, 
-            title: "Unlisted Group & Private Tours", 
-            children: unlistedProducts,
-            size: unlistedProducts.length
-        };
-
-        if (activeToursNode) {
-            if (!activeToursNode.children) activeToursNode.children = [];
-            activeToursNode.children.push(unlistedNode);
-        } else {
-            hydratedData.push(unlistedNode);
-        }
-    }
-
-    // --- FAST EXIT ---
+    // --- FAST EXIT: STANDARD MODE ---
     if (!isUpcomingMode) return res.status(200).json(hydratedData);
 
     // --- UPCOMING MODE ---
-    // (Logic identical, just using cleanProduct data structure)
      if (isUpcomingMode) {
         let uniqueProducts = new Map(); 
         const collect = (nodes) => {
@@ -156,11 +120,8 @@ export default async function handler(req, res) {
             });
         };
         collect(hydratedData); 
-        // ... (Remaining upcoming logic is same, availability fetch is unavoidable)
-        // For brevity, assuming you paste the rest of the standard upcoming logic here
-        // If you need the full upcoming block again let me know, but the standard one works with the clean object.
-         
-         const today = new Date();
+
+        const today = new Date();
         const futureDate = new Date();
         futureDate.setMonth(today.getMonth() + 6);
         const startStr = today.toISOString().split('T')[0];
