@@ -2,7 +2,7 @@ import crypto from 'crypto';
 
 export default async function handler(req, res) {
   // --- ⚡ LAYER A: SERVER CACHE (1 HOUR) ---
-  // This tells Vercel: "Save this response. Don't call Bokun again for 3600 seconds."
+  // This tells ercel: "Save this response. Don't call Bokun again for 3600 seconds."
   res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=59');
 
   // --- CORS HEADERS ---
