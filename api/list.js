@@ -18,11 +18,7 @@ export default async function handler(req, res) {
     const stringToSign = cleanDateStr + accessKey + method + path;
     const signature = crypto.createHmac('sha1', secretKey).update(stringToSign).digest('base64');
     return {
-      'X-Bokun-AccessKey': accessKey, 
-      'X-Bokun-Date': cleanDateStr, 
-      'X-Bokun-Signature': signature, 
-      'Accept': 'application/json', 
-      'Content-Type': 'application/json'
+      'X-Bokun-AccessKey': accessKey, 'X-Bokun-Date': cleanDateStr, 'X-Bokun-Signature': signature, 'Accept': 'application/json', 'Content-Type': 'application/json'
     };
   };
 
@@ -37,7 +33,7 @@ export default async function handler(req, res) {
     if (!listRes.ok) throw new Error("Failed to fetch folder tree");
     const listData = await listRes.json();
 
-    // 2. HYDRATION LOGIC
+    // 2. FETCH LIST ITEMS
     const fetchProductsForList = async (listId) => {
         const path = `/product-list.json/${listId}`;
         const resp = await fetch(`https://api.bokun.io${path}`, { method: 'GET', headers: getHeaders('GET', path) });
@@ -45,29 +41,49 @@ export default async function handler(req, res) {
         return data.items || [];
     };
 
+    // 3. RECURSIVE HYDRATION (The "Deep Digger")
     const hydrateTree = async (nodes, onlyGroupTours = false) => {
         const promises = nodes.map(async (node) => {
+            // OPTIMIZATION: In Upcoming Mode, skip Private/School folders to save time
             if (onlyGroupTours && (node.title.includes("Private") || node.title.includes("School"))) return node; 
 
-            if (node.children?.length > 0) {
+            // If it has children already (Sub-lists from root)
+            if (node.children && node.children.length > 0) {
                 node.children = await hydrateTree(node.children, onlyGroupTours);
-            } else if (node.size > 0 && (!node.children || node.children.length === 0)) {
-                const realProducts = await fetchProductsForList(node.id);
-                node.children = realProducts.map(p => {
-                    const data = p.activity || p;
-                    return { ...data, slug: slugify(data.title) };
-                });
+            } 
+            // If it's a List but empty children, Fetch it!
+            else if (node.size > 0 && (!node.children || node.children.length === 0)) {
+                const realItems = await fetchProductsForList(node.id);
+                
+                // CRITICAL: Check if these items are PRODUCTS or MORE SUB-LISTS
+                // If an item has 'activity', it's a product. If not, it might be a sub-list.
+                // We map them to a standard format.
+                const processedChildren = await Promise.all(realItems.map(async (item) => {
+                    // Case A: It's a Product
+                    if (item.activity) {
+                        return { ...item.activity, slug: slugify(item.activity.title) };
+                    }
+                    // Case B: It might be a sub-list (rare but possible in Bokun)
+                    return item; 
+                }));
+                node.children = processedChildren;
             }
             return node;
         });
         return Promise.all(promises);
     };
 
+    // Hydrate the whole tree structure
     const hydratedData = await hydrateTree(listData, isUpcomingMode);
     
+    // --- FAST EXIT: STANDARD MODE ---
+    // If we are NOT in upcoming mode, return the tree immediately.
+    // We do NOT check dates here. This makes it instant.
     if (!isUpcomingMode) return res.status(200).json(hydratedData);
 
-    // 3. UPCOMING MODE
+
+    // --- UPCOMING MODE ONLY (Date Checks) ---
+    // This part runs ONLY for the "Upcoming Trips" page
     if (isUpcomingMode) {
         let uniqueProducts = new Map(); 
         
@@ -80,13 +96,12 @@ export default async function handler(req, res) {
         };
         const groupFolder = findGroupFolder(hydratedData);
         
+        // Flatten the tree to find products
         const collect = (nodes) => {
             nodes.forEach(node => {
-                if (node.children?.length > 0) collect(node.children);
+                if (node.children && node.children.length > 0) collect(node.children);
                 else if (node.id) {
-                    if (!uniqueProducts.has(node.id)) {
-                        uniqueProducts.set(node.id, node);
-                    }
+                    if (!uniqueProducts.has(node.id)) uniqueProducts.set(node.id, node);
                 }
             });
         };
@@ -94,11 +109,10 @@ export default async function handler(req, res) {
         if (groupFolder) collect(groupFolder.children || []);
         else collect(hydratedData); 
 
-        // --- SPEED FIX: REVERT TO 6 MONTHS ---
+        // DATE RANGE: 6 Months (Kept safe for speed)
         const today = new Date();
         const futureDate = new Date();
-        futureDate.setMonth(today.getMonth() + 6); // <--- BACK TO 6 MONTHS (Safe & Fast)
-        
+        futureDate.setMonth(today.getMonth() + 6);
         const startStr = today.toISOString().split('T')[0];
         const endStr = futureDate.toISOString().split('T')[0];
 
@@ -110,7 +124,6 @@ export default async function handler(req, res) {
                 const availPath = `/activity.json/${product.id}/availabilities?start=${startStr}&end=${endStr}&includeSoldOut=false`;
                 const availRes = await fetch(`https://api.bokun.io${availPath}`, { method: 'GET', headers: getHeaders('GET', availPath) });
                 const dates = await availRes.json();
-                
                 if (dates?.length > 0) return { ...product, nextDates: dates };
                 return null;
             } catch (e) { return null; }
@@ -126,15 +139,12 @@ export default async function handler(req, res) {
             product.nextDates.forEach(dateEntry => {
                 const rawDate = dateEntry.date || dateEntry.startTime.split('T')[0];
                 const startDate = new Date(rawDate);
-                
                 if (startDate < cutoffDate) return;
 
                 let endDate = new Date(startDate);
                 let daysToAdd = 0;
-                
                 if (product.durationWeeks) daysToAdd = (product.durationWeeks * 7) - 1;
                 else if (product.durationDays) daysToAdd = product.durationDays - 1;
-                
                 if (daysToAdd < 0) daysToAdd = 0; 
                 endDate.setDate(startDate.getDate() + daysToAdd);
 
@@ -148,7 +158,6 @@ export default async function handler(req, res) {
         });
 
         calendarEntries.sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
-        
         return res.status(200).json(calendarEntries);
     }
   } catch (error) { res.status(500).json({ error: error.message }); }
