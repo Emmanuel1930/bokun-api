@@ -27,7 +27,7 @@ export default async function handler(req, res) {
   try {
     const isUpcomingMode = req.query.mode === 'upcoming';
     
-    // 1. FETCH FULL FOLDER TREE (Organized Lists)
+    // 1. FETCH FOLDER STRUCTURE (Organized Lists)
     const listPath = '/product-list.json/list';
     const listRes = await fetch(`https://api.bokun.io${listPath}`, { method: 'GET', headers: getHeaders('GET', listPath) });
     if (!listRes.ok) throw new Error("Failed to fetch folder tree");
@@ -70,7 +70,7 @@ export default async function handler(req, res) {
     // Hydrate the user's organized lists
     let hydratedData = await Promise.all(rootTree.map(node => expandNode(node)));
 
-    // 3. THE SAFETY NET: Fetch ALL Products (Unlisted Check)
+    // 3. THE SAFETY NET: Fetch ALL Products (Unlisted Check) 🛡️
     // We use the "Search" endpoint to grab everything in the account
     const searchPath = '/activity.json/search';
     const searchBody = JSON.stringify({ "page": 1, "pageSize": 1000 }); // Fetch up to 1000 items
@@ -83,7 +83,7 @@ export default async function handler(req, res) {
     
     if (searchRes.ok) {
         const searchData = await searchRes.json();
-        const allProducts = searchData.results || []; // Bokun usually returns { results: [...] }
+        const allProducts = searchData.results || []; 
 
         // Find products that match our criteria but were NOT in any folder
         const unlistedProducts = allProducts.filter(p => {
@@ -95,10 +95,10 @@ export default async function handler(req, res) {
         if (unlistedProducts.length > 0) {
             const activeToursNode = hydratedData.find(n => n.title === "Active Tours");
             
-            // Create the Unlisted Folder
+            // Create the Unlisted Folder with a "Magical Name" that matches keywords
             const unlistedNode = {
                 id: 999999, // Fake ID
-                title: "Unlisted Tours", // Special Title
+                title: "Unlisted Group & Private Tours", // Matches both keywords!
                 children: unlistedProducts,
                 size: unlistedProducts.length
             };
@@ -117,7 +117,6 @@ export default async function handler(req, res) {
     if (!isUpcomingMode) return res.status(200).json(hydratedData);
 
     // --- UPCOMING MODE (Dates Logic - Unchanged) ---
-    // ... (Code for upcoming mode dates remains exactly the same) ...
      if (isUpcomingMode) {
         let uniqueProducts = new Map(); 
         const collect = (nodes) => {
