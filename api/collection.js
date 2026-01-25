@@ -1,12 +1,20 @@
 // api/collection.js
-import crypto from 'crypto';
+const crypto = require('crypto');
 
-export default async function handler(req, res) {
+module.exports = async (req, res) => {
     const accessKey = process.env.BOKUN_ACCESS_KEY;
     const secretKey = process.env.BOKUN_SECRET_KEY;
     const baseUrl = "https://api.bokun.io";
 
-    // --- 1. Helper: Bókun Signature ---
+    // 1. Check for Keys immediately
+    if (!accessKey || !secretKey) {
+        return res.status(500).json({ 
+            error: "Configuration Error", 
+            message: "BOKUN_ACCESS_KEY or BOKUN_SECRET_KEY is missing in Vercel Environment Variables." 
+        });
+    }
+
+    // 2. Helper: Bókun Signature
     const getHeaders = (method, path) => {
         const date = new Date().toUTCString();
         const contentToSign = date + accessKey + method + path;
@@ -21,8 +29,7 @@ export default async function handler(req, res) {
     };
 
     try {
-        // --- 2. Fetch Active Products ---
-        // We use /search to get a flat list of all active products
+        // 3. Fetch Active Products
         const searchPath = '/activity.json/search';
         const searchBody = {
             "page": 1,
@@ -36,49 +43,57 @@ export default async function handler(req, res) {
             body: JSON.stringify(searchBody)
         });
 
-        if (!response.ok) throw new Error(`API Error: ${response.status}`);
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Bokun API Error (${response.status}): ${errorText}`);
+        }
+
         const bokunData = await response.json();
 
-        // --- 3. Transform to Exact Duda JSON ---
+        // 4. Transform to Exact Duda JSON
         const dudaCollection = bokunData.results.map(tour => {
             
-            // Slug Generation (Strict match to legacy)
-            const slug = tour.title.toLowerCase().trim()
+            // Slug Generation
+            const safeTitle = tour.title || "untitled-tour";
+            const slug = safeTitle.toLowerCase().trim()
                 .replace(/[^a-z0-9\s-]/g, '')
                 .replace(/\s+/g, '-')
                 .replace(/-+/g, '-');
 
-            // Price Formatting (AED 10655.00)
+            // Price Formatting
             const price = tour.nextDefaultPriceMoney 
                 ? `${tour.nextDefaultPriceMoney.currency} ${tour.nextDefaultPriceMoney.amount.toFixed(2)}` 
                 : "";
 
-            // Duration Logic (Total Days)
+            // Duration Logic
             let durationText = "";
             let totalDays = (tour.durationWeeks || 0) * 7 + (tour.durationDays || 0);
             if (totalDays > 0) durationText = `${totalDays} days`;
             else if (tour.durationHours) durationText = `${tour.durationHours} hours`;
 
-            // Booking Cutoff Text Logic
+            // Booking Cutoff Text
             let bookingCutoffText = "";
             if (tour.bookingCutoffWeeks) bookingCutoffText = `Can be booked no later than ${tour.bookingCutoffWeeks} week(s) before start time`;
             else if (tour.bookingCutoffDays) bookingCutoffText = `Can be booked no later than ${tour.bookingCutoffDays} day(s) before start time`;
             else if (tour.bookingCutoffHours) bookingCutoffText = `Can be booked no later than ${tour.bookingCutoffHours} hour(s) before start time`;
 
-            // Pickup Text Logic
+            // Pickup Text
             const pickupMinutes = tour.pickupMinutesBefore || 0;
             const pickupText = `<strong>Note:</strong> Pick-up starts ${pickupMinutes} minute(s) before departure.`;
 
-            // Determine if Group or Private (Simple logic based on title/attributes)
-            const isPrivate = tour.title.toLowerCase().includes('private') || (tour.attributes && tour.attributes.includes('Private'));
+            // Group vs Private Logic
+            const isPrivate = safeTitle.toLowerCase().includes('private') || (tour.attributes && tour.attributes.includes('Private'));
             const subListName = isPrivate ? "Private Tours" : "Group Tours";
+
+            // Safe Location Handling
+            const loc = tour.locationCode || {};
 
             return {
                 "page_item_url": slug,
                 "data": {
                     "id": tour.id.toString(),
                     "productCode": tour.productCode || "",
-                    "title": tour.title,
+                    "title": safeTitle,
                     "description": tour.description || "",
                     "excerpt": tour.excerpt || "",
                     "supplier": tour.vendor ? tour.vendor.title : "Arabian Wanderers",
@@ -86,8 +101,7 @@ export default async function handler(req, res) {
                     "meetingType": tour.meetingType || "Meet on location",
                     "defaultPrice": price,
                     
-                    // Rich Text Fields
-                    "inclusions": [], // Kept empty as per your sample
+                    "inclusions": [],
                     "included": tour.included || "",
                     "exclusions": [],
                     "excluded": tour.excluded || "",
@@ -95,21 +109,18 @@ export default async function handler(req, res) {
                     "knowBeforeYouGo": tour.knowBeforeYouGo || "",
                     "knowBeforeYouGoItems": [], 
 
-                    // Metadata Text
                     "durationText": durationText,
                     "minAge": tour.minAge ? `Minimum age: ${tour.minAge}` : "",
                     "difficultyLevel": tour.difficultyLevel || "",
                     "bookingCutoffText": bookingCutoffText,
                     "pickupBeforeMinutesText": pickupText,
 
-                    // Categories & Attributes (Arrays of objects)
                     "activityCategories": tour.activityCategories ? tour.activityCategories.map(c => ({ "value": c })) : [],
                     "activityAttributes": tour.attributes ? tour.attributes.map(a => ({ "value": a })) : [],
                     "guidedLanguage": tour.guidedLanguages ? tour.guidedLanguages.map(l => ({ "value": l })) : [{"value": "English"}],
                     "guidedLanguageHeadphones": [],
                     "guidedLanguageReadingMaterial": [],
 
-                    // Media
                     "keyPhoto": tour.keyPhoto ? tour.keyPhoto.originalUrl : "",
                     "keyPhotoMedium": tour.keyPhoto ? tour.keyPhoto.originalUrl.replace('original', 'medium') : "",
                     "keyPhotoSmall": tour.keyPhoto ? tour.keyPhoto.originalUrl.replace('original', 'small') : "",
@@ -121,7 +132,6 @@ export default async function handler(req, res) {
                         "description": p.description || null
                     })) : [],
 
-                    // Lists & Categories structure (Matches Legacy)
                     "subLists": `|${subListName}|`,
                     "productLists": [
                         { "id": 93520, "title": "Active Tours", "parent_id": null, "level": 0 },
@@ -130,16 +140,13 @@ export default async function handler(req, res) {
                     "tripadvisorRating": "",
                     "tripadvisorNumReviews": "",
 
-                    // Location Structure
-                    "location": tour.locationCode ? {
+                    "location": loc.location ? {
                         "geo": {
-                            "longitude": tour.locationCode.longitude ? tour.locationCode.longitude.toString() : "",
-                            "latitude": tour.locationCode.latitude ? tour.locationCode.latitude.toString() : ""
+                            "longitude": loc.longitude ? loc.longitude.toString() : "",
+                            "latitude": loc.latitude ? loc.latitude.toString() : ""
                         },
-                        "address": {
-                            "streetAddress": tour.locationCode.location || ""
-                        },
-                        "address_geolocation": tour.locationCode.location || ""
+                        "address": { "streetAddress": loc.location || "" },
+                        "address_geolocation": loc.location || ""
                     } : null
                 }
             };
@@ -148,7 +155,13 @@ export default async function handler(req, res) {
         res.status(200).json(dudaCollection);
 
     } catch (err) {
+        // 5. DETAILED ERROR LOGGING
+        // This will print the actual error to your browser so we can fix it.
         console.error("Collection API Error:", err);
-        res.status(500).json({ error: "Failed to fetch collection" });
+        res.status(500).json({ 
+            error: "Failed to fetch collection",
+            details: err.message,
+            stack: err.stack 
+        });
     }
-}
+};
