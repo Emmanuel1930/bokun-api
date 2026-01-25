@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 
 export default async function handler(req, res) {
-  // --- 1. ENABLE CORS (Standard Setup) ---
+  // --- 1. ENABLE CORS ---
   res.setHeader('Access-Control-Allow-Credentials', true);
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
@@ -35,41 +35,33 @@ export default async function handler(req, res) {
   };
 
   try {
-    // --- STEP 1: Search for IDs ---
+    // --- STEP 1: SMART SEARCH (Get EVERYTHING in 1 Call) ---
+    // We ask for 'videos', 'photos', 'itinerary' right here to avoid looping later.
     const searchPath = '/activity.json/search';
     const searchBody = JSON.stringify({
       "page": 1,
-      "pageSize": 100, 
+      "pageSize": 200, 
       "inLang": "en",
-      "currency": "AED"
+      "currency": "AED",
+      "includes": ["videos", "photos", "itinerary", "extras", "attributes", "startPoints", "prices"] 
     });
 
-    const searchResponse = await fetch(baseUrl + searchPath, {
+    const response = await fetch(baseUrl + searchPath, {
       method: 'POST',
       headers: getHeaders('POST', searchPath),
       body: searchBody
     });
 
-    if (!searchResponse.ok) throw new Error("Search Failed");
-    const searchData = await searchResponse.json();
+    if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Bokun Search Error: ${response.status} - ${text}`);
+    }
 
-    const productSummaries = searchData.items || []; 
+    const searchData = await response.json();
+    const allTours = searchData.items || [];
 
-    // --- STEP 2: Fetch FULL Details ---
-    const detailPromises = productSummaries.map(async (summary) => {
-        const detailPath = `/activity.json/${summary.id}?currency=AED&lang=EN`;
-        const detailRes = await fetch(baseUrl + detailPath, {
-            method: 'GET',
-            headers: getHeaders('GET', detailPath)
-        });
-        if (!detailRes.ok) return null;
-        return detailRes.json();
-    });
-
-    const detailedProducts = (await Promise.all(detailPromises)).filter(p => p !== null);
-
-    // --- STEP 3: Map to Duda Collection Format ---
-    const dudaCollection = detailedProducts.map(tour => {
+    // --- STEP 2: Map Directly to Duda (No Loop Fetching) ---
+    const dudaCollection = allTours.map(tour => {
         
         // Slugify
         const safeTitle = tour.title || "untitled";
@@ -103,13 +95,13 @@ export default async function handler(req, res) {
         const isPrivate = safeTitle.toLowerCase().includes('private') || (tour.attributes && tour.attributes.includes('Private'));
         const subListName = isPrivate ? "Private Tours" : "Group Tours";
 
-        // Video Logic (The Fix)
-        // Check the 'videos' array first, fallback to 'keyVideo'
+        // --- VIDEO FIX ---
+        // Bókun puts videos in a list. We grab the first one.
         let finalVideoUrl = "";
         if (tour.videos && Array.isArray(tour.videos) && tour.videos.length > 0) {
-            finalVideoUrl = tour.videos[0].url;
+            finalVideoUrl = tour.videos[0].url; // Takes the first video from the list
         } else if (tour.keyVideo && tour.keyVideo.url) {
-            finalVideoUrl = tour.keyVideo.url;
+            finalVideoUrl = tour.keyVideo.url; // Fallback
         }
 
         // Location
@@ -157,7 +149,7 @@ export default async function handler(req, res) {
                 "keyPhotoSmall": tour.keyPhoto ? tour.keyPhoto.originalUrl.replace('original', 'small') : "",
                 "keyPhotoAltText": "",
                 
-                // FIXED VIDEO FIELD
+                // --- MAPPED VIDEO FIELD ---
                 "keyVideo": finalVideoUrl,
 
                 "otherPhotos": tour.photos ? tour.photos.map(p => ({
