@@ -1,21 +1,12 @@
 // api/collection.js
-const crypto = require('crypto');
+import crypto from 'crypto';
 
-module.exports = async (req, res) => {
-    // 1. Setup Credentials
+export default async function handler(req, res) {
     const accessKey = process.env.BOKUN_ACCESS_KEY;
     const secretKey = process.env.BOKUN_SECRET_KEY;
     const baseUrl = "https://api.bokun.io";
 
-    // SAFETY CHECK: Stop immediately if keys are missing
-    if (!accessKey || !secretKey) {
-        return res.status(500).json({ 
-            error: "Configuration Error", 
-            message: "Missing BOKUN_ACCESS_KEY or BOKUN_SECRET_KEY in Vercel Environment Variables." 
-        });
-    }
-
-    // 2. Helper: Bókun Signature
+    // --- 1. Helper: Bókun Signature ---
     const getHeaders = (method, path) => {
         const date = new Date().toUTCString();
         const contentToSign = date + accessKey + method + path;
@@ -30,7 +21,8 @@ module.exports = async (req, res) => {
     };
 
     try {
-        // 3. Fetch Active Products
+        // --- 2. Fetch Active Products ---
+        // We use /search to get a flat list of all active products
         const searchPath = '/activity.json/search';
         const searchBody = {
             "page": 1,
@@ -44,57 +36,49 @@ module.exports = async (req, res) => {
             body: JSON.stringify(searchBody)
         });
 
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`Bokun API Error (${response.status}): ${errorText}`);
-        }
-
+        if (!response.ok) throw new Error(`API Error: ${response.status}`);
         const bokunData = await response.json();
 
-        // 4. Transform to Exact Duda JSON
+        // --- 3. Transform to Exact Duda JSON ---
         const dudaCollection = bokunData.results.map(tour => {
             
-            // Slug Generation
-            const safeTitle = tour.title || "untitled-tour";
-            const slug = safeTitle.toLowerCase().trim()
+            // Slug Generation (Strict match to legacy)
+            const slug = tour.title.toLowerCase().trim()
                 .replace(/[^a-z0-9\s-]/g, '')
                 .replace(/\s+/g, '-')
                 .replace(/-+/g, '-');
 
-            // Price Formatting
+            // Price Formatting (AED 10655.00)
             const price = tour.nextDefaultPriceMoney 
                 ? `${tour.nextDefaultPriceMoney.currency} ${tour.nextDefaultPriceMoney.amount.toFixed(2)}` 
                 : "";
 
-            // Duration Logic
+            // Duration Logic (Total Days)
             let durationText = "";
             let totalDays = (tour.durationWeeks || 0) * 7 + (tour.durationDays || 0);
             if (totalDays > 0) durationText = `${totalDays} days`;
             else if (tour.durationHours) durationText = `${tour.durationHours} hours`;
 
-            // Booking Cutoff Text
+            // Booking Cutoff Text Logic
             let bookingCutoffText = "";
             if (tour.bookingCutoffWeeks) bookingCutoffText = `Can be booked no later than ${tour.bookingCutoffWeeks} week(s) before start time`;
             else if (tour.bookingCutoffDays) bookingCutoffText = `Can be booked no later than ${tour.bookingCutoffDays} day(s) before start time`;
             else if (tour.bookingCutoffHours) bookingCutoffText = `Can be booked no later than ${tour.bookingCutoffHours} hour(s) before start time`;
 
-            // Pickup Text
+            // Pickup Text Logic
             const pickupMinutes = tour.pickupMinutesBefore || 0;
             const pickupText = `<strong>Note:</strong> Pick-up starts ${pickupMinutes} minute(s) before departure.`;
 
-            // Group vs Private Logic
-            const isPrivate = safeTitle.toLowerCase().includes('private') || (tour.attributes && tour.attributes.includes('Private'));
+            // Determine if Group or Private (Simple logic based on title/attributes)
+            const isPrivate = tour.title.toLowerCase().includes('private') || (tour.attributes && tour.attributes.includes('Private'));
             const subListName = isPrivate ? "Private Tours" : "Group Tours";
-
-            // Safe Location Handling
-            const loc = tour.locationCode || {};
 
             return {
                 "page_item_url": slug,
                 "data": {
                     "id": tour.id.toString(),
                     "productCode": tour.productCode || "",
-                    "title": safeTitle,
+                    "title": tour.title,
                     "description": tour.description || "",
                     "excerpt": tour.excerpt || "",
                     "supplier": tour.vendor ? tour.vendor.title : "Arabian Wanderers",
@@ -102,7 +86,8 @@ module.exports = async (req, res) => {
                     "meetingType": tour.meetingType || "Meet on location",
                     "defaultPrice": price,
                     
-                    "inclusions": [],
+                    // Rich Text Fields
+                    "inclusions": [], // Kept empty as per your sample
                     "included": tour.included || "",
                     "exclusions": [],
                     "excluded": tour.excluded || "",
@@ -110,18 +95,21 @@ module.exports = async (req, res) => {
                     "knowBeforeYouGo": tour.knowBeforeYouGo || "",
                     "knowBeforeYouGoItems": [], 
 
+                    // Metadata Text
                     "durationText": durationText,
                     "minAge": tour.minAge ? `Minimum age: ${tour.minAge}` : "",
                     "difficultyLevel": tour.difficultyLevel || "",
                     "bookingCutoffText": bookingCutoffText,
                     "pickupBeforeMinutesText": pickupText,
 
+                    // Categories & Attributes (Arrays of objects)
                     "activityCategories": tour.activityCategories ? tour.activityCategories.map(c => ({ "value": c })) : [],
                     "activityAttributes": tour.attributes ? tour.attributes.map(a => ({ "value": a })) : [],
                     "guidedLanguage": tour.guidedLanguages ? tour.guidedLanguages.map(l => ({ "value": l })) : [{"value": "English"}],
                     "guidedLanguageHeadphones": [],
                     "guidedLanguageReadingMaterial": [],
 
+                    // Media
                     "keyPhoto": tour.keyPhoto ? tour.keyPhoto.originalUrl : "",
                     "keyPhotoMedium": tour.keyPhoto ? tour.keyPhoto.originalUrl.replace('original', 'medium') : "",
                     "keyPhotoSmall": tour.keyPhoto ? tour.keyPhoto.originalUrl.replace('original', 'small') : "",
@@ -133,6 +121,7 @@ module.exports = async (req, res) => {
                         "description": p.description || null
                     })) : [],
 
+                    // Lists & Categories structure (Matches Legacy)
                     "subLists": `|${subListName}|`,
                     "productLists": [
                         { "id": 93520, "title": "Active Tours", "parent_id": null, "level": 0 },
@@ -141,13 +130,16 @@ module.exports = async (req, res) => {
                     "tripadvisorRating": "",
                     "tripadvisorNumReviews": "",
 
-                    "location": loc.location ? {
+                    // Location Structure
+                    "location": tour.locationCode ? {
                         "geo": {
-                            "longitude": loc.longitude ? loc.longitude.toString() : "",
-                            "latitude": loc.latitude ? loc.latitude.toString() : ""
+                            "longitude": tour.locationCode.longitude ? tour.locationCode.longitude.toString() : "",
+                            "latitude": tour.locationCode.latitude ? tour.locationCode.latitude.toString() : ""
                         },
-                        "address": { "streetAddress": loc.location || "" },
-                        "address_geolocation": loc.location || ""
+                        "address": {
+                            "streetAddress": tour.locationCode.location || ""
+                        },
+                        "address_geolocation": tour.locationCode.location || ""
                     } : null
                 }
             };
@@ -157,9 +149,6 @@ module.exports = async (req, res) => {
 
     } catch (err) {
         console.error("Collection API Error:", err);
-        res.status(500).json({ 
-            error: "Failed to fetch collection",
-            details: err.message 
-        });
+        res.status(500).json({ error: "Failed to fetch collection" });
     }
-};
+}
