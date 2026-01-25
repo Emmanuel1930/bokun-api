@@ -2,15 +2,16 @@
 const crypto = require('crypto');
 
 module.exports = async (req, res) => {
+    // 1. Setup Credentials
     const accessKey = process.env.BOKUN_ACCESS_KEY;
     const secretKey = process.env.BOKUN_SECRET_KEY;
     const baseUrl = "https://api.bokun.io";
 
-    // 1. Check for Keys immediately
+    // SAFETY CHECK: Stop immediately if keys are missing
     if (!accessKey || !secretKey) {
         return res.status(500).json({ 
             error: "Configuration Error", 
-            message: "BOKUN_ACCESS_KEY or BOKUN_SECRET_KEY is missing in Vercel Environment Variables." 
+            message: "Missing BOKUN_ACCESS_KEY or BOKUN_SECRET_KEY in Vercel Environment Variables." 
         });
     }
 
@@ -155,13 +156,10 @@ module.exports = async (req, res) => {
         res.status(200).json(dudaCollection);
 
     } catch (err) {
-        // 5. DETAILED ERROR LOGGING
-        // This will print the actual error to your browser so we can fix it.
         console.error("Collection API Error:", err);
         res.status(500).json({ 
             error: "Failed to fetch collection",
-            details: err.message,
-            stack: err.stack 
+            details: err.message 
         });
     }
 };
