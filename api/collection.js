@@ -35,7 +35,7 @@ export default async function handler(req, res) {
   };
 
   try {
-    // --- STEP 1: Search for IDs (Using 'items') ---
+    // --- STEP 1: Search for IDs ---
     const searchPath = '/activity.json/search';
     const searchBody = JSON.stringify({
       "page": 1,
@@ -53,11 +53,9 @@ export default async function handler(req, res) {
     if (!searchResponse.ok) throw new Error("Search Failed");
     const searchData = await searchResponse.json();
 
-    // ⚠️ CRITICAL FIX: Use 'items', not 'results'
     const productSummaries = searchData.items || []; 
 
-    // --- STEP 2: Fetch FULL Details for each product ---
-    // (This ensures we get the Description, Photos, and Attributes)
+    // --- STEP 2: Fetch FULL Details ---
     const detailPromises = productSummaries.map(async (summary) => {
         const detailPath = `/activity.json/${summary.id}?currency=AED&lang=EN`;
         const detailRes = await fetch(baseUrl + detailPath, {
@@ -105,6 +103,15 @@ export default async function handler(req, res) {
         const isPrivate = safeTitle.toLowerCase().includes('private') || (tour.attributes && tour.attributes.includes('Private'));
         const subListName = isPrivate ? "Private Tours" : "Group Tours";
 
+        // Video Logic (The Fix)
+        // Check the 'videos' array first, fallback to 'keyVideo'
+        let finalVideoUrl = "";
+        if (tour.videos && Array.isArray(tour.videos) && tour.videos.length > 0) {
+            finalVideoUrl = tour.videos[0].url;
+        } else if (tour.keyVideo && tour.keyVideo.url) {
+            finalVideoUrl = tour.keyVideo.url;
+        }
+
         // Location
         const startPoint = (tour.startPoints && tour.startPoints.length > 0) ? tour.startPoints[0] : {};
 
@@ -149,7 +156,10 @@ export default async function handler(req, res) {
                 "keyPhotoMedium": tour.keyPhoto ? tour.keyPhoto.originalUrl.replace('original', 'medium') : "",
                 "keyPhotoSmall": tour.keyPhoto ? tour.keyPhoto.originalUrl.replace('original', 'small') : "",
                 "keyPhotoAltText": "",
-                "keyVideo": tour.keyVideo ? tour.keyVideo.url : "",
+                
+                // FIXED VIDEO FIELD
+                "keyVideo": finalVideoUrl,
+
                 "otherPhotos": tour.photos ? tour.photos.map(p => ({
                     "originalUrl": p.originalUrl,
                     "alternateText": p.alternateText || null,
