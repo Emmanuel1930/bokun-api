@@ -16,7 +16,6 @@ export default async function handler(req, res) {
   const secretKey = process.env.BOKUN_SECRET_KEY;
   const baseUrl = "https://api.bokun.io";
 
-  // --- HELPER: Auth Headers ---
   const getHeaders = (method, path) => {
     const now = new Date();
     const pad = (n) => String(n).padStart(2, '0');
@@ -33,14 +32,12 @@ export default async function handler(req, res) {
   };
 
   // --- HELPER: Formatter for HTML Fields ---
-  // If Bókun sends a list (Array), we turn it into an HTML <ul> list.
   const formatToHtml = (data) => {
     if (!data) return "";
     if (Array.isArray(data)) {
-        // Convert list ["Passport", "Water"] -> "<ul><li>Passport</li><li>Water</li></ul>"
         return "<ul>" + data.map(item => `<li>${item.title || item}</li>`).join('') + "</ul>";
     }
-    return data; // It's already a string (HTML)
+    return data; // Pass strings (HTML) through as-is
   };
 
   try {
@@ -50,7 +47,9 @@ export default async function handler(req, res) {
       "page": 1,
       "pageSize": 200, 
       "inLang": "en",
-      "currency": "AED"
+      "currency": "AED",
+      // Added 'knowBeforeYouGo' explicitly to includes
+      "includes": ["videos", "photos", "itinerary", "extras", "attributes", "startPoints", "prices", "knowBeforeYouGo"] 
     });
 
     const searchRes = await fetch(baseUrl + searchPath, {
@@ -63,8 +62,7 @@ export default async function handler(req, res) {
     const searchData = await searchRes.json();
     const productSummaries = searchData.items || [];
 
-    // --- STEP 2: The "Throttled" Fetch (Batching) ---
-    // We fetch 5 tours at a time to prevent Bókun from blocking us.
+    // --- STEP 2: The "Throttled" Fetch (Batching 5 at a time) ---
     const detailedProducts = [];
     const BATCH_SIZE = 5;
     
@@ -108,11 +106,18 @@ export default async function handler(req, res) {
         if (totalDays > 0) durationText = `${totalDays} days`;
         else if (tour.durationHours) durationText = `${tour.durationHours} hours`;
 
-        // Video Logic (Priority: KeyVideo -> List)
+        // --- ROBUST VIDEO LOGIC ---
         let finalVideoUrl = "";
-        if (tour.keyVideo && tour.keyVideo.url) {
+        // Check 1: Is keyVideo just a string? (Rare but possible)
+        if (typeof tour.keyVideo === 'string') {
+            finalVideoUrl = tour.keyVideo;
+        } 
+        // Check 2: Is keyVideo an object with a URL?
+        else if (tour.keyVideo && tour.keyVideo.url) {
             finalVideoUrl = tour.keyVideo.url; 
-        } else if (tour.videos && Array.isArray(tour.videos) && tour.videos.length > 0) {
+        } 
+        // Check 3: Is there a video list? Take the first one.
+        else if (tour.videos && Array.isArray(tour.videos) && tour.videos.length > 0) {
             finalVideoUrl = tour.videos[0].url; 
         }
 
@@ -129,7 +134,6 @@ export default async function handler(req, res) {
                 "id": tour.id.toString(),
                 "productCode": tour.externalId || tour.id.toString(),
                 "title": safeTitle,
-                // Now these will be FULL HTML because we fetched the detail endpoint
                 "description": formatToHtml(tour.description),
                 "excerpt": tour.excerpt || "",
                 "supplier": tour.vendor ? tour.vendor.title : "Arabian Wanderers",
@@ -137,11 +141,13 @@ export default async function handler(req, res) {
                 "meetingType": tour.meetingType || "Meet on location",
                 "defaultPrice": price,
                 
-                // Rich Text Fields (Using the Helper to ensure HTML)
+                // HTML Fields - Explicitly mapping knowBeforeYouGo
                 "included": formatToHtml(tour.included),
                 "excluded": formatToHtml(tour.excluded),
                 "requirements": formatToHtml(tour.requirements),
                 "knowBeforeYouGo": formatToHtml(tour.knowBeforeYouGo),
+                
+                // Empty arrays (unless you want to map specific lists)
                 "inclusions": [],
                 "exclusions": [],
                 "knowBeforeYouGoItems": [], 
@@ -168,7 +174,7 @@ export default async function handler(req, res) {
                 "keyPhotoSmall": tour.keyPhoto ? tour.keyPhoto.originalUrl.replace('original', 'small') : "",
                 "keyPhotoAltText": "",
                 
-                // Video
+                // --- FIXED VIDEO FIELD ---
                 "keyVideo": finalVideoUrl,
 
                 "otherPhotos": tour.photos ? tour.photos.map(p => ({
