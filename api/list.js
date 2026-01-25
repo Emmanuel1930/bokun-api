@@ -43,7 +43,6 @@ export default async function handler(req, res) {
       return baseUrl.includes('?') ? `${baseUrl}&w=600` : `${baseUrl}?w=600`;
   };
 
-  // --- ✂️ DATA TRIMMER ---
   const cleanProduct = (p) => {
       if (!p) return null;
       return {
@@ -58,7 +57,7 @@ export default async function handler(req, res) {
           locationCode: p.locationCode,
           googlePlace: p.googlePlace,
           active: p.active,
-          startDate: p.startDate,
+          startDate: p.startDate, 
           endDate: p.endDate 
       };
   };
@@ -66,15 +65,21 @@ export default async function handler(req, res) {
   try {
     const isUpcomingMode = req.query.mode === 'upcoming';
     
-    // 1. FETCH FOLDER STRUCTURE ONLY 📂
-    // We strictly fetch the list. We DO NOT search for unlisted items anymore.
+    // 1. START PARALLEL FETCH (FAST) 🚀
     const listPath = '/product-list.json/list';
-    const listRes = await fetch(`https://api.bokun.io${listPath}`, { method: 'GET', headers: getHeaders('GET', listPath) });
-    
-    if (!listRes.ok) throw new Error("Failed to fetch folder tree");
-    const rootTree = await listRes.json();
+    const foldersPromise = fetch(`https://api.bokun.io${listPath}`, { method: 'GET', headers: getHeaders('GET', listPath) })
+        .then(r => r.ok ? r.json() : []);
 
-    // Helper: Fetch items for a list
+    // 🛡️ SAFETY NET RESTORED (Fixes Upcoming Trips)
+    const searchPath = '/activity.json/search';
+    const searchBody = JSON.stringify({ "page": 1, "pageSize": 1000 }); 
+    const searchPromise = fetch(`https://api.bokun.io${searchPath}`, { 
+        method: 'POST', headers: getHeaders('POST', searchPath), body: searchBody 
+    }).then(r => r.ok ? r.json() : { results: [] });
+
+    // 2. PROCESS FOLDERS
+    const rootTree = await foldersPromise;
+
     const fetchProductsForList = async (listId) => {
         try {
             const path = `/product-list.json/${listId}`;
@@ -87,7 +92,8 @@ export default async function handler(req, res) {
         } catch (e) { return []; }
     };
 
-    // 2. EXPAND FOLDERS 🌲
+    let foundProductIds = new Set(); 
+
     const expandNode = async (node) => {
         if (node.children && node.children.length > 0) {
             node.children = await Promise.all(node.children.map(child => expandNode(child)));
@@ -97,16 +103,39 @@ export default async function handler(req, res) {
             if (directProducts.length > 0) {
                 if (!node.children) node.children = [];
                 node.children = node.children.concat(directProducts);
+                directProducts.forEach(p => foundProductIds.add(p.id));
             }
         }
         return node;
     };
 
-    // Run folder expansion
     let hydratedData = await Promise.all(rootTree.map(node => expandNode(node)));
 
-    // ❌ DELETED: The "Safety Net" Search block is completely gone.
-    // The API now strictly returns ONLY what is in your Bókun folders.
+    // 3. ADD UNLISTED TOURS (Safety Net) 🛡️
+    const searchData = await searchPromise;
+    const allProducts = searchData.results || []; 
+
+    const unlistedProducts = allProducts.filter(p => {
+        return !foundProductIds.has(p.id) && p.active === true; 
+    }).map(p => cleanProduct(p)); 
+
+    if (unlistedProducts.length > 0) {
+        const activeToursNode = hydratedData.find(n => n.title === "Active Tours");
+        // Create the Virtual Folder so Code can see it
+        const unlistedNode = {
+            id: 999999, 
+            title: "Unlisted Group & Private Tours", 
+            children: unlistedProducts,
+            size: unlistedProducts.length
+        };
+
+        if (activeToursNode) {
+            if (!activeToursNode.children) activeToursNode.children = [];
+            activeToursNode.children.push(unlistedNode);
+        } else {
+            hydratedData.push(unlistedNode);
+        }
+    }
 
     // --- RETURN DATA ---
     if (!isUpcomingMode) return res.status(200).json(hydratedData);
