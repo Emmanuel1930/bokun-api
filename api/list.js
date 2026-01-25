@@ -1,9 +1,6 @@
 import crypto from 'crypto';
 
 export default async function handler(req, res) {
-  // --- ⚡ LAYER A: SERVER CACHE (1 HOUR) ---
-  res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=59');
-
   // --- CORS HEADERS ---
   res.setHeader('Access-Control-Allow-Credentials', true);
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -27,120 +24,100 @@ export default async function handler(req, res) {
 
   const slugify = (text) => text ? text.toString().toLowerCase().trim().replace(/\s+/g, '-').replace(/[^\w\-]+/g, '').replace(/\-\-+/g, '-') : "";
 
-  // --- 🖼️ IMAGE OPTIMIZER HELPER ---
-  const getBestImage = (activity) => {
-      let photo = activity.keyPhoto;
-      if (!photo && activity.photos && activity.photos.length > 0) photo = activity.photos[0]; 
-      if (!photo) return 'https://via.placeholder.com/600x400?text=No+Image';
-
-      if (photo.derived) {
-          const large = photo.derived.find(d => d.name === 'large');
-          if (large) return large.cleanUrl;
-          const preview = photo.derived.find(d => d.name === 'preview');
-          if (preview) return preview.cleanUrl;
-      }
-      const baseUrl = photo.cleanUrl || photo.originalUrl;
-      return baseUrl.includes('?') ? `${baseUrl}&w=600` : `${baseUrl}?w=600`;
-  };
-
-  const cleanProduct = (p) => {
-      if (!p) return null;
-      return {
-          id: p.id,
-          title: p.title,
-          slug: slugify(p.title),
-          optimizedImage: getBestImage(p),
-          nextDefaultPriceMoney: p.nextDefaultPriceMoney, 
-          durationWeeks: p.durationWeeks,
-          durationDays: p.durationDays,
-          durationHours: p.durationHours,
-          locationCode: p.locationCode,
-          googlePlace: p.googlePlace,
-          active: p.active,
-          startDate: p.startDate, 
-          endDate: p.endDate 
-      };
-  };
-
   try {
     const isUpcomingMode = req.query.mode === 'upcoming';
     
-    // 1. START PARALLEL FETCH (FAST) 🚀
+    // 1. FETCH FULL FOLDER TREE (Organized Lists)
     const listPath = '/product-list.json/list';
-    const foldersPromise = fetch(`https://api.bokun.io${listPath}`, { method: 'GET', headers: getHeaders('GET', listPath) })
-        .then(r => r.ok ? r.json() : []);
+    const listRes = await fetch(`https://api.bokun.io${listPath}`, { method: 'GET', headers: getHeaders('GET', listPath) });
+    if (!listRes.ok) throw new Error("Failed to fetch folder tree");
+    const rootTree = await listRes.json();
 
-    // 🛡️ SAFETY NET RESTORED (Fixes Upcoming Trips)
-    const searchPath = '/activity.json/search';
-    const searchBody = JSON.stringify({ "page": 1, "pageSize": 1000 }); 
-    const searchPromise = fetch(`https://api.bokun.io${searchPath}`, { 
-        method: 'POST', headers: getHeaders('POST', searchPath), body: searchBody 
-    }).then(r => r.ok ? r.json() : { results: [] });
-
-    // 2. PROCESS FOLDERS
-    const rootTree = await foldersPromise;
-
+    // Helper: Fetch items in a specific list
     const fetchProductsForList = async (listId) => {
         try {
             const path = `/product-list.json/${listId}`;
             const resp = await fetch(`https://api.bokun.io${path}`, { method: 'GET', headers: getHeaders('GET', path) });
             const data = await resp.json();
             return (data.items || []).map(item => {
-                if (item.activity) return cleanProduct(item.activity); 
+                if (item.activity) return { ...item.activity, slug: slugify(item.activity.title) };
                 return null;
             }).filter(item => item !== null);
         } catch (e) { return []; }
     };
 
-    let foundProductIds = new Set(); 
+    // 2. EXPAND THE TREE (Standard Logic)
+    let foundProductIds = new Set(); // Track IDs we found in folders
 
     const expandNode = async (node) => {
         if (node.children && node.children.length > 0) {
             node.children = await Promise.all(node.children.map(child => expandNode(child)));
         }
+        
+        // Always try to fetch products for this node
         if (node.id) {
             const directProducts = await fetchProductsForList(node.id);
             if (directProducts.length > 0) {
                 if (!node.children) node.children = [];
                 node.children = node.children.concat(directProducts);
+                // Mark these IDs as "Found"
                 directProducts.forEach(p => foundProductIds.add(p.id));
             }
         }
         return node;
     };
 
+    // Hydrate the user's organized lists
     let hydratedData = await Promise.all(rootTree.map(node => expandNode(node)));
 
-    // 3. ADD UNLISTED TOURS (Safety Net) 🛡️
-    const searchData = await searchPromise;
-    const allProducts = searchData.results || []; 
+    // 3. THE SAFETY NET: Fetch ALL Products (Unlisted Check)
+    // We use the "Search" endpoint to grab everything in the account
+    const searchPath = '/activity.json/search';
+    const searchBody = JSON.stringify({ "page": 1, "pageSize": 1000 }); // Fetch up to 1000 items
+    
+    const searchRes = await fetch(`https://api.bokun.io${searchPath}`, { 
+        method: 'POST', 
+        headers: getHeaders('POST', searchPath),
+        body: searchBody 
+    });
+    
+    if (searchRes.ok) {
+        const searchData = await searchRes.json();
+        const allProducts = searchData.results || []; // Bokun usually returns { results: [...] }
 
-    const unlistedProducts = allProducts.filter(p => {
-        return !foundProductIds.has(p.id) && p.active === true; 
-    }).map(p => cleanProduct(p)); 
+        // Find products that match our criteria but were NOT in any folder
+        const unlistedProducts = allProducts.filter(p => {
+            // Must be active + Not already found
+            return !foundProductIds.has(p.id) && p.active === true; 
+        }).map(p => ({ ...p, slug: slugify(p.title) }));
 
-    if (unlistedProducts.length > 0) {
-        const activeToursNode = hydratedData.find(n => n.title === "Active Tours");
-        // Create the Virtual Folder so Code can see it
-        const unlistedNode = {
-            id: 999999, 
-            title: "Unlisted Group & Private Tours", 
-            children: unlistedProducts,
-            size: unlistedProducts.length
-        };
+        // If we found orphans, create a special "Unlisted" folder for them
+        if (unlistedProducts.length > 0) {
+            const activeToursNode = hydratedData.find(n => n.title === "Active Tours");
+            
+            // Create the Unlisted Folder
+            const unlistedNode = {
+                id: 999999, // Fake ID
+                title: "Unlisted Tours", // Special Title
+                children: unlistedProducts,
+                size: unlistedProducts.length
+            };
 
-        if (activeToursNode) {
-            if (!activeToursNode.children) activeToursNode.children = [];
-            activeToursNode.children.push(unlistedNode);
-        } else {
-            hydratedData.push(unlistedNode);
+            // Inject it into "Active Tours" if possible, otherwise Root
+            if (activeToursNode) {
+                if (!activeToursNode.children) activeToursNode.children = [];
+                activeToursNode.children.push(unlistedNode);
+            } else {
+                hydratedData.push(unlistedNode);
+            }
         }
     }
 
-    // --- RETURN DATA ---
+    // --- FAST EXIT: STANDARD MODE ---
     if (!isUpcomingMode) return res.status(200).json(hydratedData);
 
-    // --- UPCOMING MODE ---
+    // --- UPCOMING MODE (Dates Logic - Unchanged) ---
+    // ... (Code for upcoming mode dates remains exactly the same) ...
      if (isUpcomingMode) {
         let uniqueProducts = new Map(); 
         const collect = (nodes) => {
@@ -152,6 +129,7 @@ export default async function handler(req, res) {
             });
         };
         collect(hydratedData); 
+
         const today = new Date();
         const futureDate = new Date();
         futureDate.setMonth(today.getMonth() + 6);
@@ -180,21 +158,23 @@ export default async function handler(req, res) {
                 const rawDate = dateEntry.date || dateEntry.startTime.split('T')[0];
                 const startDate = new Date(rawDate);
                 if (startDate < cutoffDate) return;
+
                 let endDate = new Date(startDate);
                 let daysToAdd = 0;
                 if (product.durationWeeks) daysToAdd = (product.durationWeeks * 7) - 1;
                 else if (product.durationDays) daysToAdd = product.durationDays - 1;
                 if (daysToAdd < 0) daysToAdd = 0; 
                 endDate.setDate(startDate.getDate() + daysToAdd);
+
                 calendarEntries.push({
                     ...product,
                     startDate: rawDate,
                     endDate: endDate.toISOString().split('T')[0], 
-                    spotsLeft: dateEntry.availabilityCount,
-                    optimizedImage: product.optimizedImage 
+                    spotsLeft: dateEntry.availabilityCount
                 });
             });
         });
+
         calendarEntries.sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
         return res.status(200).json(calendarEntries);
     }
