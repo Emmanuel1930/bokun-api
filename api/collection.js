@@ -36,13 +36,13 @@ export default async function handler(req, res) {
 
   try {
     // --- STEP 1: SMART SEARCH (Get EVERYTHING in 1 Call) ---
-    // We ask for 'videos', 'photos', 'itinerary' right here to avoid looping later.
     const searchPath = '/activity.json/search';
     const searchBody = JSON.stringify({
       "page": 1,
       "pageSize": 200, 
       "inLang": "en",
       "currency": "AED",
+      // We explicitly include "videos" here to match the component you found
       "includes": ["videos", "photos", "itinerary", "extras", "attributes", "startPoints", "prices"] 
     });
 
@@ -60,7 +60,7 @@ export default async function handler(req, res) {
     const searchData = await response.json();
     const allTours = searchData.items || [];
 
-    // --- STEP 2: Map Directly to Duda (No Loop Fetching) ---
+    // --- STEP 2: Map Directly to Duda ---
     const dudaCollection = allTours.map(tour => {
         
         // Slugify
@@ -95,13 +95,14 @@ export default async function handler(req, res) {
         const isPrivate = safeTitle.toLowerCase().includes('private') || (tour.attributes && tour.attributes.includes('Private'));
         const subListName = isPrivate ? "Private Tours" : "Group Tours";
 
-        // --- VIDEO FIX ---
-        // Bókun puts videos in a list. We grab the first one.
+        // --- VIDEO LOGIC (UPDATED) ---
+        // Priority 1: Check 'keyVideo' (Bokun Component)
+        // Priority 2: Fallback to the 'videos' list
         let finalVideoUrl = "";
-        if (tour.videos && Array.isArray(tour.videos) && tour.videos.length > 0) {
-            finalVideoUrl = tour.videos[0].url; // Takes the first video from the list
-        } else if (tour.keyVideo && tour.keyVideo.url) {
-            finalVideoUrl = tour.keyVideo.url; // Fallback
+        if (tour.keyVideo && tour.keyVideo.url) {
+            finalVideoUrl = tour.keyVideo.url; 
+        } else if (tour.videos && Array.isArray(tour.videos) && tour.videos.length > 0) {
+            finalVideoUrl = tour.videos[0].url; 
         }
 
         // Location
@@ -149,7 +150,7 @@ export default async function handler(req, res) {
                 "keyPhotoSmall": tour.keyPhoto ? tour.keyPhoto.originalUrl.replace('original', 'small') : "",
                 "keyPhotoAltText": "",
                 
-                // --- MAPPED VIDEO FIELD ---
+                // Mapped Video
                 "keyVideo": finalVideoUrl,
 
                 "otherPhotos": tour.photos ? tour.photos.map(p => ({
