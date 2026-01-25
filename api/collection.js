@@ -5,10 +5,7 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Credentials', true);
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
-  res.setHeader(
-    'Access-Control-Allow-Headers',
-    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
-  );
+  res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
 
   if (req.method === 'OPTIONS') {
     res.status(200).end();
@@ -19,6 +16,7 @@ export default async function handler(req, res) {
   const secretKey = process.env.BOKUN_SECRET_KEY;
   const baseUrl = "https://api.bokun.io";
 
+  // --- HELPER: Auth Headers ---
   const getHeaders = (method, path) => {
     const now = new Date();
     const pad = (n) => String(n).padStart(2, '0');
@@ -34,43 +32,72 @@ export default async function handler(req, res) {
     };
   };
 
+  // --- HELPER: Formatter for HTML Fields ---
+  // If Bókun sends a list (Array), we turn it into an HTML <ul> list.
+  const formatToHtml = (data) => {
+    if (!data) return "";
+    if (Array.isArray(data)) {
+        // Convert list ["Passport", "Water"] -> "<ul><li>Passport</li><li>Water</li></ul>"
+        return "<ul>" + data.map(item => `<li>${item.title || item}</li>`).join('') + "</ul>";
+    }
+    return data; // It's already a string (HTML)
+  };
+
   try {
-    // --- STEP 1: SMART SEARCH (Get EVERYTHING in 1 Call) ---
+    // --- STEP 1: Search to get IDs ---
     const searchPath = '/activity.json/search';
     const searchBody = JSON.stringify({
       "page": 1,
       "pageSize": 200, 
       "inLang": "en",
-      "currency": "AED",
-      // We explicitly include "videos" here to match the component you found
-      "includes": ["videos", "photos", "itinerary", "extras", "attributes", "startPoints", "prices"] 
+      "currency": "AED"
     });
 
-    const response = await fetch(baseUrl + searchPath, {
+    const searchRes = await fetch(baseUrl + searchPath, {
       method: 'POST',
       headers: getHeaders('POST', searchPath),
       body: searchBody
     });
 
-    if (!response.ok) {
-        const text = await response.text();
-        throw new Error(`Bokun Search Error: ${response.status} - ${text}`);
+    if (!searchRes.ok) throw new Error("Search Failed");
+    const searchData = await searchRes.json();
+    const productSummaries = searchData.items || [];
+
+    // --- STEP 2: The "Throttled" Fetch (Batching) ---
+    // We fetch 5 tours at a time to prevent Bókun from blocking us.
+    const detailedProducts = [];
+    const BATCH_SIZE = 5;
+    
+    for (let i = 0; i < productSummaries.length; i += BATCH_SIZE) {
+        const batch = productSummaries.slice(i, i + BATCH_SIZE);
+        
+        const batchPromises = batch.map(async (summary) => {
+            const detailPath = `/activity.json/${summary.id}?currency=AED&lang=EN`;
+            try {
+                const res = await fetch(baseUrl + detailPath, {
+                    method: 'GET',
+                    headers: getHeaders('GET', detailPath)
+                });
+                if (!res.ok) return null;
+                return res.json();
+            } catch (e) {
+                return null;
+            }
+        });
+
+        const batchResults = await Promise.all(batchPromises);
+        detailedProducts.push(...batchResults.filter(p => p !== null));
     }
 
-    const searchData = await response.json();
-    const allTours = searchData.items || [];
-
-    // --- STEP 2: Map Directly to Duda ---
-    const dudaCollection = allTours.map(tour => {
+    // --- STEP 3: Map to Duda ---
+    const dudaCollection = detailedProducts.map(tour => {
         
-        // Slugify
         const safeTitle = tour.title || "untitled";
         const slug = safeTitle.toString().toLowerCase().trim()
             .replace(/\s+/g, '-')      
             .replace(/[^\w\-]+/g, '')  
             .replace(/\-\-+/g, '-');   
 
-        // Price
         const price = tour.nextDefaultPriceMoney 
             ? `${tour.nextDefaultPriceMoney.currency} ${tour.nextDefaultPriceMoney.amount.toFixed(2)}` 
             : "";
@@ -81,29 +108,17 @@ export default async function handler(req, res) {
         if (totalDays > 0) durationText = `${totalDays} days`;
         else if (tour.durationHours) durationText = `${tour.durationHours} hours`;
 
-        // Booking Text
-        let bookingCutoffText = "";
-        if (tour.bookingCutoffWeeks) bookingCutoffText = `Can be booked no later than ${tour.bookingCutoffWeeks} week(s) before start time`;
-        else if (tour.bookingCutoffDays) bookingCutoffText = `Can be booked no later than ${tour.bookingCutoffDays} day(s) before start time`;
-        else if (tour.bookingCutoffHours) bookingCutoffText = `Can be booked no later than ${tour.bookingCutoffHours} hour(s) before start time`;
-
-        // Pickup Text
-        const pickupMinutes = tour.pickupMinutesBefore || 0;
-        const pickupText = `<strong>Note:</strong> Pick-up starts ${pickupMinutes} minute(s) before departure.`;
-
-        // Categories
-        const isPrivate = safeTitle.toLowerCase().includes('private') || (tour.attributes && tour.attributes.includes('Private'));
-        const subListName = isPrivate ? "Private Tours" : "Group Tours";
-
-        // --- VIDEO LOGIC (UPDATED) ---
-        // Priority 1: Check 'keyVideo' (Bokun Component)
-        // Priority 2: Fallback to the 'videos' list
+        // Video Logic (Priority: KeyVideo -> List)
         let finalVideoUrl = "";
         if (tour.keyVideo && tour.keyVideo.url) {
             finalVideoUrl = tour.keyVideo.url; 
         } else if (tour.videos && Array.isArray(tour.videos) && tour.videos.length > 0) {
             finalVideoUrl = tour.videos[0].url; 
         }
+
+        // Categories
+        const isPrivate = safeTitle.toLowerCase().includes('private') || (tour.attributes && tour.attributes.includes('Private'));
+        const subListName = isPrivate ? "Private Tours" : "Group Tours";
 
         // Location
         const startPoint = (tour.startPoints && tour.startPoints.length > 0) ? tour.startPoints[0] : {};
@@ -114,18 +129,19 @@ export default async function handler(req, res) {
                 "id": tour.id.toString(),
                 "productCode": tour.externalId || tour.id.toString(),
                 "title": safeTitle,
-                "description": tour.description || "",
+                // Now these will be FULL HTML because we fetched the detail endpoint
+                "description": formatToHtml(tour.description),
                 "excerpt": tour.excerpt || "",
                 "supplier": tour.vendor ? tour.vendor.title : "Arabian Wanderers",
                 "activityType": tour.activityType || "Multi day tour",
                 "meetingType": tour.meetingType || "Meet on location",
                 "defaultPrice": price,
                 
-                // HTML Fields
-                "included": tour.included || "",
-                "excluded": tour.excluded || "",
-                "requirements": tour.requirements || "",
-                "knowBeforeYouGo": tour.knowBeforeYouGo || "",
+                // Rich Text Fields (Using the Helper to ensure HTML)
+                "included": formatToHtml(tour.included),
+                "excluded": formatToHtml(tour.excluded),
+                "requirements": formatToHtml(tour.requirements),
+                "knowBeforeYouGo": formatToHtml(tour.knowBeforeYouGo),
                 "inclusions": [],
                 "exclusions": [],
                 "knowBeforeYouGoItems": [], 
@@ -134,8 +150,10 @@ export default async function handler(req, res) {
                 "durationText": durationText,
                 "minAge": tour.minAge ? `Minimum age: ${tour.minAge}` : "",
                 "difficultyLevel": tour.difficultyLevel || "",
-                "bookingCutoffText": bookingCutoffText,
-                "pickupBeforeMinutesText": pickupText,
+                "bookingCutoffText": tour.bookingCutoffWeeks ? 
+                    `Can be booked no later than ${tour.bookingCutoffWeeks} week(s) before` : 
+                    (tour.bookingCutoffDays ? `Can be booked no later than ${tour.bookingCutoffDays} day(s) before` : ""),
+                "pickupBeforeMinutesText": `<strong>Note:</strong> Pick-up starts ${tour.pickupMinutesBefore || 0} minute(s) before departure.`,
 
                 // Arrays
                 "activityCategories": tour.activityCategories ? tour.activityCategories.map(c => ({ "value": c })) : [],
@@ -150,7 +168,7 @@ export default async function handler(req, res) {
                 "keyPhotoSmall": tour.keyPhoto ? tour.keyPhoto.originalUrl.replace('original', 'small') : "",
                 "keyPhotoAltText": "",
                 
-                // Mapped Video
+                // Video
                 "keyVideo": finalVideoUrl,
 
                 "otherPhotos": tour.photos ? tour.photos.map(p => ({
@@ -159,7 +177,7 @@ export default async function handler(req, res) {
                     "description": p.description || null
                 })) : [],
 
-                // Legacy Lists
+                // Lists
                 "subLists": `|${subListName}|`,
                 "productLists": [
                     { "id": 93520, "title": "Active Tours", "parent_id": null, "level": 0 },
@@ -168,7 +186,7 @@ export default async function handler(req, res) {
                 "tripadvisorRating": "",
                 "tripadvisorNumReviews": "",
 
-                // Location Object
+                // Location
                 "location": {
                     "geo": {
                         "longitude": startPoint.longitude ? startPoint.longitude.toString() : "",
