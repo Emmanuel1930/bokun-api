@@ -35,14 +35,18 @@ export default async function handler(req, res) {
   };
 
 // --- HELPER: Format Itinerary into HTML ---
-  const formatItinerary = (items) => {
-    if (!items || !Array.isArray(items) || items.length === 0) return "";
+const formatItinerary = (items) => {
+    if (!items || !Array.isArray(items) || items.length === 0) return "<p>No itinerary available.</p>";
+    
     return items.map(item => {
         const title = item.title || `Day ${item.day || ''}`;
         const body = item.body || item.text || item.description || ""; 
-        return `<div style="margin-bottom: 20px;">
-                  <h4 style="margin: 0 0 5px 0;">${title}</h4>
-                  <div style="font-size: 14px; line-height: 1.6;">${body}</div>
+        
+        // This style mimics the 'card' look you liked before
+        return `<div class="itinerary-day-card" style="margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid #eee;">
+                  <span class="day-badge" style="font-weight: bold; color: #666; display: block; margin-bottom: 4px;">Day ${item.day || '?'}</span>
+                  <div class="day-title" style="font-size: 18px; font-weight: bold; margin-bottom: 8px;">${title}</div>
+                  <div class="day-body" style="font-size: 14px; line-height: 1.6;">${body}</div>
                 </div>`;
     }).join('');
   };
@@ -139,7 +143,7 @@ export default async function handler(req, res) {
                 "excluded": tour.excluded || "",
                 "requirements": tour.requirements || "",
                 "knowBeforeYouGo": tour.attention || tour.knowBeforeYouGo || "",
-                "itinerary": formatItinerary(tour.itinerary),
+                "itinerary": formatItinerary(tour.itinerary || tour.agendaItems),
                 
                 "inclusions": [],
                 "exclusions": [],
