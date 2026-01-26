@@ -122,11 +122,10 @@ export default async function handler(req, res) {
                 "defaultPrice": price,
                 
                 // HTML Fields
-// HTML Fields
                 "included": tour.included || "",
                 "excluded": tour.excluded || "",
                 "requirements": tour.requirements || "",
-               "knowBeforeYouGo": tour.attention || "",
+                "knowBeforeYouGo": tour.attention || tour.knowBeforeYouGo || "",
                 
                 "inclusions": [],
                 "exclusions": [],
