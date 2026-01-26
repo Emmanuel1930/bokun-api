@@ -126,7 +126,7 @@ export default async function handler(req, res) {
                 "included": tour.included || "",
                 "excluded": tour.excluded || "",
                 "requirements": tour.requirements || "",
-               "knowBeforeYouGo": tour.knowBeforeYouGo || "",
+               "knowBeforeYouGo": tour.attention || "",
                 
                 "inclusions": [],
                 "exclusions": [],
