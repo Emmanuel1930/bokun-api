@@ -22,7 +22,13 @@ export default async function handler(req, res) {
     };
   };
 
-  const slugify = (text) => text ? text.toString().toLowerCase().trim().replace(/\s+/g, '-').replace(/[^\w\-]+/g, '').replace(/\-\-+/g, '-') : "";
+  // UPDATED SLUGIFY: Handles apostrophes, special chars, and double dashes perfectly
+const slugify = (text) => text ? text.toString().toLowerCase().trim()
+    .replace(/['’]/g, '-')      // Turn apostrophes into dashes
+    .replace(/\s+/g, '-')       // Turn spaces into dashes
+    .replace(/[^\w\-]+/g, '')   // Remove other special chars
+    .replace(/\-\-+/g, '-')     // Clean up any double dashes
+    : "";
 
   // --- 🖼️ IMAGE OPTIMIZER HELPER (ADDED) ---
   const getBestImage = (activity) => {
