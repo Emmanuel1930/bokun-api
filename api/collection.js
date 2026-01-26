@@ -34,6 +34,19 @@ export default async function handler(req, res) {
     };
   };
 
+// --- HELPER: Format Itinerary into HTML ---
+  const formatItinerary = (items) => {
+    if (!items || !Array.isArray(items) || items.length === 0) return "";
+    return items.map(item => {
+        const title = item.title || `Day ${item.day || ''}`;
+        const body = item.body || item.text || item.description || ""; 
+        return `<div style="margin-bottom: 20px;">
+                  <h4 style="margin: 0 0 5px 0;">${title}</h4>
+                  <div style="font-size: 14px; line-height: 1.6;">${body}</div>
+                </div>`;
+    }).join('');
+  };
+  
   try {
     // --- STEP 1: Search for IDs (Using 'items') ---
     const searchPath = '/activity.json/search';
@@ -126,6 +139,7 @@ export default async function handler(req, res) {
                 "excluded": tour.excluded || "",
                 "requirements": tour.requirements || "",
                 "knowBeforeYouGo": tour.attention || tour.knowBeforeYouGo || "",
+                "itinerary": formatItinerary(tour.itinerary),
                 
                 "inclusions": [],
                 "exclusions": [],
