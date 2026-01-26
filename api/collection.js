@@ -150,7 +150,7 @@ export default async function handler(req, res) {
                 "keyPhotoMedium": tour.keyPhoto ? tour.keyPhoto.originalUrl.replace('original', 'medium') : "",
                 "keyPhotoSmall": tour.keyPhoto ? tour.keyPhoto.originalUrl.replace('original', 'small') : "",
                 "keyPhotoAltText": "",
-                "keyVideo": tour.keyVideo ? tour.keyVideo.url : "",
+                "keyVideo": (tour.videos && tour.videos.length > 0) ? tour.videos[0].sourceUrl : (tour.keyVideo ? tour.keyVideo.url : ""),
                 "otherPhotos": tour.photos ? tour.photos.map(p => ({
                     "originalUrl": p.originalUrl,
                     "alternateText": p.alternateText || null,
