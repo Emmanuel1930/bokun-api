@@ -93,8 +93,9 @@ const formatItinerary = (items) => {
         // Slugify
         const safeTitle = tour.title || "untitled";
         const slug = safeTitle.toString().toLowerCase().trim()
-            .replace(/\s+/g, '-')      
-            .replace(/[^\w\-]+/g, '')  
+            .replace(/['’]/g, '-')     // 1. Turn apostrophes into dashes
+            .replace(/\s+/g, '-')      // 2. Turn spaces into dashes
+            .replace(/[^\w\-]+/g, '')  // 3. Remove other weird characters
             .replace(/\-\-+/g, '-');   
 
         // Price
