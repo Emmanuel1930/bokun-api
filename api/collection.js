@@ -126,9 +126,7 @@ export default async function handler(req, res) {
                 "included": tour.included || "",
                 "excluded": tour.excluded || "",
                 "requirements": tour.requirements || "",
-                
-                // THE FIX: Map 'attention' from Bokun to 'knowBeforeYouGo' in Duda
-                "knowBeforeYouGo": tour.attention || tour.knowBeforeYouGo || "",
+               "knowBeforeYouGo": tour.knowBeforeYouGo || "",
                 
                 "inclusions": [],
                 "exclusions": [],
