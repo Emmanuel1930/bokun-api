@@ -122,10 +122,14 @@ export default async function handler(req, res) {
                 "defaultPrice": price,
                 
                 // HTML Fields
+// HTML Fields
                 "included": tour.included || "",
                 "excluded": tour.excluded || "",
                 "requirements": tour.requirements || "",
-                "knowBeforeYouGo": tour.knowBeforeYouGo || "",
+                
+                // THE FIX: Map 'attention' from Bokun to 'knowBeforeYouGo' in Duda
+                "knowBeforeYouGo": tour.attention || tour.knowBeforeYouGo || "",
+                
                 "inclusions": [],
                 "exclusions": [],
                 "knowBeforeYouGoItems": [], 
