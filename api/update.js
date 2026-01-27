@@ -2,10 +2,12 @@ import { kv } from '@vercel/kv';
 import crypto from 'crypto';
 
 export default async function handler(req, res) {
+  // This function is the "Hard Worker". It runs in the background.
+  
   const accessKey = process.env.BOKUN_ACCESS_KEY;
   const secretKey = process.env.BOKUN_SECRET_KEY;
 
-  // --- HELPER FUNCTIONS ---
+  // --- 1. HELPER FUNCTIONS (Stolen from your old list.js) ---
   const getHeaders = (method, path) => {
     const now = new Date();
     const cleanDateStr = now.toISOString().replace(/\.\d{3}Z$/, '').replace(/T/, ' ') + 'Z';
@@ -35,11 +37,13 @@ export default async function handler(req, res) {
   };
 
   try {
-    console.log("Starting Manual Update...");
+    console.log("🔄 Starting Bókun Background Update...");
 
-    // 1. FETCH FROM BÓKUN (Standard Mode)
+    // --- 2. FETCH DATA (The Heavy Lifting) ---
+    // We are fetching the "Standard" list logic here
     const listPath = '/product-list.json/list';
     const listRes = await fetch(`https://api.bokun.io${listPath}`, { method: 'GET', headers: getHeaders('GET', listPath) });
+    if (!listRes.ok) throw new Error("Failed to fetch folder tree from Bókun");
     const listData = await listRes.json();
 
     const fetchProductsForList = async (listId) => {
@@ -56,12 +60,14 @@ export default async function handler(req, res) {
             } 
             else if (node.size > 0 && (!node.children || node.children.length === 0)) {
                 const realItems = await fetchProductsForList(node.id);
+                
+                // Process the items exactly like your old list.js did
                 const processedChildren = await Promise.all(realItems.map(async (item) => {
                     if (item.activity) {
                         return { 
                             ...item.activity, 
                             slug: slugify(item.activity.title),
-                            optimizedImage: getBestImage(item.activity)
+                            optimizedImage: getBestImage(item.activity) // Uses your optimizer!
                         };
                     }
                     return item; 
@@ -73,16 +79,22 @@ export default async function handler(req, res) {
         return Promise.all(promises);
     };
 
+    // Run the heavy recursive fetch
     const hydratedData = await hydrateTree(listData);
     
-    // 2. SAVE TO DATABASE 💾
-    // We are saving the result to a key named 'bokun_tours_standard'
+    // --- 3. SAVE TO VAULT (The New Part) 💾 ---
+    // Instead of res.json(hydratedData), we SAVE it.
     await kv.set('bokun_tours_standard', hydratedData);
 
-    res.status(200).json({ success: true, message: "Database Updated Successfully!", timestamp: new Date() });
+    console.log("✅ Data successfully saved to Redis Vault.");
+    res.status(200).json({ 
+        success: true, 
+        message: "Database Updated Successfully!", 
+        timestamp: new Date() 
+    });
 
   } catch (error) { 
-      console.error(error);
+      console.error("❌ Update Failed:", error);
       res.status(500).json({ error: error.message }); 
   }
 }
