@@ -6,8 +6,7 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
-  // 🔥 SPEED BOOST: Cache for 1 second, then update in background for 59 seconds
-  res.setHeader('Cache-Control', 'public, s-maxage=1, stale-while-revalidate=599');
+  
   
   if (req.method === 'OPTIONS') { res.status(200).end(); return; }
 
