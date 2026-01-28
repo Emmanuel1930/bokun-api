@@ -59,6 +59,7 @@ const slugify = (text) => text ? text.toString().toLowerCase().trim()
     if (!listRes.ok) throw new Error("Failed to fetch folder tree");
     const listData = await listRes.json();
 
+    
     // 2. FETCH LIST ITEMS
     const fetchProductsForList = async (listId) => {
         const path = `/product-list.json/${listId}`;
