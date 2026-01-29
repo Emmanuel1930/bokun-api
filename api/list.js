@@ -8,6 +8,7 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
   
   // SPEED BOOST: Fresh for 60s, Serve Stale (Instant) for 1 Week
+  // (This is standard browser caching, NOT database saving)
   res.setHeader('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=604800');
   
   if (req.method === 'OPTIONS') { res.status(200).end(); return; }
@@ -25,19 +26,22 @@ export default async function handler(req, res) {
     };
   };
 
-  // UPDATED SLUGIFY: Handles apostrophes, special chars, and double dashes perfectly
-const slugify = (text) => text ? text.toString().toLowerCase().trim()
-    .replace(/['’]/g, '-')      // Turn apostrophes into dashes
-    .replace(/\s+/g, '-')       // Turn spaces into dashes
-    .replace(/[^\w\-]+/g, '')   // Remove other special chars
-    .replace(/\-\-+/g, '-')     // Clean up any double dashes
-    : "";
+  const slugify = (text) => text ? text.toString().toLowerCase().trim()
+    .replace(/['’]/g, '-')
+    .replace(/\s+/g, '-')
+    .replace(/[^\w\-]+/g, '')
+    .replace(/\-\-+/g, '-') : "";
 
-  // --- 🖼️ IMAGE OPTIMIZER HELPER (ADDED) ---
+  // --- 🖼️ IMAGE OPTIMIZER (UPDATED WITH FALLBACK) ---
+  // Logic: Try KeyPhoto -> Photo 1 -> Photo 2 -> Photo 3 -> Placeholder
   const getBestImage = (activity) => {
+      // 1. Try Key Photo first
       let photo = activity.keyPhoto;
-      // Fallback: If keyPhoto is missing, use the first photo in the list
-      if (!photo && activity.photos && activity.photos.length > 0) photo = activity.photos[0]; 
+
+      // 2. If missing, try the first 3 photos in the list
+      if (!photo && activity.photos && activity.photos.length > 0) {
+          photo = activity.photos[0] || activity.photos[1] || activity.photos[2];
+      }
       
       if (!photo) return 'https://via.placeholder.com/600x400?text=No+Image';
 
@@ -51,6 +55,36 @@ const slugify = (text) => text ? text.toString().toLowerCase().trim()
       return baseUrl.includes('?') ? `${baseUrl}&w=600` : `${baseUrl}?w=600`;
   };
 
+  // --- ✂️ THE DATA STRIPPER (NEW) ---
+  // This takes the HUGE product and returns only the 6 things we need.
+  const simplifyProduct = (item) => {
+      if (!item.activity) return item; // If it's a folder/list, keep it as is
+      
+      const act = item.activity;
+      return {
+          // Keep Identifiers
+          id: act.id,
+          title: act.title,
+          slug: slugify(act.title),
+          
+          // Generate ONE image string (Delete the huge photos array)
+          optimizedImage: getBestImage(act),
+          
+          // Keep Price (Just the number)
+          price: act.nextDefaultPriceMoney?.amount || "Check Price",
+          
+          // Keep Duration
+          durationWeeks: act.durationWeeks,
+          durationDays: act.durationDays,
+          durationHours: act.durationHours,
+          
+          // Keep Location
+          location: act.googlePlace?.name || act.locationCode?.location
+          
+          // 🗑️ DELETED: description, photos, videos, bookingQuestions, inclusions...
+      };
+  };
+
   try {
     const isUpcomingMode = req.query.mode === 'upcoming';
     
@@ -59,7 +93,6 @@ const slugify = (text) => text ? text.toString().toLowerCase().trim()
     const listRes = await fetch(`https://api.bokun.io${listPath}`, { method: 'GET', headers: getHeaders('GET', listPath) });
     if (!listRes.ok) throw new Error("Failed to fetch folder tree");
     const listData = await listRes.json();
-
     
     // 2. FETCH LIST ITEMS
     const fetchProductsForList = async (listId) => {
@@ -69,31 +102,23 @@ const slugify = (text) => text ? text.toString().toLowerCase().trim()
         return data.items || [];
     };
 
-    // 3. RECURSIVE HYDRATION (The "Deep Digger")
+    // 3. RECURSIVE HYDRATION
     const hydrateTree = async (nodes, onlyGroupTours = false) => {
         const promises = nodes.map(async (node) => {
-            // OPTIMIZATION: In Upcoming Mode, skip Private/School folders to save time
+            // Skip private folders if we are in upcoming mode (Optimization)
             if (onlyGroupTours && (node.title.includes("Private") || node.title.includes("School"))) return node; 
 
-            // If it has children already (Sub-lists from root)
             if (node.children && node.children.length > 0) {
                 node.children = await hydrateTree(node.children, onlyGroupTours);
             } 
-            // If it's a List but empty children, Fetch it!
             else if (node.size > 0 && (!node.children || node.children.length === 0)) {
                 const realItems = await fetchProductsForList(node.id);
                 
-                // CRITICAL: Check if these items are PRODUCTS or MORE SUB-LISTS
                 const processedChildren = await Promise.all(realItems.map(async (item) => {
-                    // Case A: It's a Product
+                    // 🔥 HERE IS THE MAGIC: We simplify the product IMMEDIATELY
                     if (item.activity) {
-                        return { 
-                            ...item.activity, 
-                            slug: slugify(item.activity.title),
-                            optimizedImage: getBestImage(item.activity) // <--- ADDED THIS LINE
-                        };
+                        return simplifyProduct(item);
                     }
-                    // Case B: It might be a sub-list
                     return item; 
                 }));
                 node.children = processedChildren;
@@ -103,14 +128,14 @@ const slugify = (text) => text ? text.toString().toLowerCase().trim()
         return Promise.all(promises);
     };
 
-    // Hydrate the whole tree structure
+    // Hydrate the tree (Now contains "Slim" products)
     const hydratedData = await hydrateTree(listData, isUpcomingMode);
     
     // --- FAST EXIT: STANDARD MODE ---
     if (!isUpcomingMode) return res.status(200).json(hydratedData);
 
 
-    // --- UPCOMING MODE ONLY (Date Checks) ---
+    // --- UPCOMING MODE ONLY ---
     if (isUpcomingMode) {
         let uniqueProducts = new Map(); 
         
@@ -123,11 +148,11 @@ const slugify = (text) => text ? text.toString().toLowerCase().trim()
         };
         const groupFolder = findGroupFolder(hydratedData);
         
-        // Flatten the tree to find products
         const collect = (nodes) => {
             nodes.forEach(node => {
                 if (node.children && node.children.length > 0) collect(node.children);
-                else if (node.id) {
+                // Since we already ran simplifyProduct, these nodes are now the slim versions
+                else if (node.id && node.title) {
                     if (!uniqueProducts.has(node.id)) uniqueProducts.set(node.id, node);
                 }
             });
@@ -136,7 +161,7 @@ const slugify = (text) => text ? text.toString().toLowerCase().trim()
         if (groupFolder) collect(groupFolder.children || []);
         else collect(hydratedData); 
 
-        // DATE RANGE: 6 Months (Kept safe for speed)
+        // DATE RANGE: 6 Months
         const today = new Date();
         const futureDate = new Date();
         futureDate.setMonth(today.getMonth() + 6);
@@ -145,24 +170,29 @@ const slugify = (text) => text ? text.toString().toLowerCase().trim()
 
         const productsToCheck = Array.from(uniqueProducts.values());
 
-        const availabilityPromises = productsToCheck.map(async (product) => {
-            try {
-                if (!product.id) return null;
-                const availPath = `/activity.json/${product.id}/availabilities?start=${startStr}&end=${endStr}&includeSoldOut=false`;
-                const availRes = await fetch(`https://api.bokun.io${availPath}`, { method: 'GET', headers: getHeaders('GET', availPath) });
-                const dates = await availRes.json();
-                if (dates?.length > 0) return { ...product, nextDates: dates };
-                return null;
-            } catch (e) { return null; }
-        });
-
-        const productsWithDates = (await Promise.all(availabilityPromises)).filter(p => p !== null);
+        // ⚡ PARALLEL FETCH (Chunks of 10 to avoid Timeout)
+        const results = [];
+        while (productsToCheck.length > 0) {
+            const chunk = productsToCheck.splice(0, 10);
+            const chunkPromises = chunk.map(async (product) => {
+                try {
+                    if (!product.id) return null;
+                    const availPath = `/activity.json/${product.id}/availabilities?start=${startStr}&end=${endStr}&includeSoldOut=false`;
+                    const availRes = await fetch(`https://api.bokun.io${availPath}`, { method: 'GET', headers: getHeaders('GET', availPath) });
+                    const dates = await availRes.json();
+                    if (dates?.length > 0) return { ...product, nextDates: dates };
+                    return null;
+                } catch (e) { return null; }
+            });
+            const chunkResults = await Promise.all(chunkPromises);
+            results.push(...chunkResults.filter(p => p !== null));
+        }
 
         let calendarEntries = [];
         const cutoffDate = new Date(); 
         cutoffDate.setDate(today.getDate() - 1); 
 
-        productsWithDates.forEach(product => {
+        results.forEach(product => {
             product.nextDates.forEach(dateEntry => {
                 const rawDate = dateEntry.date || dateEntry.startTime.split('T')[0];
                 const startDate = new Date(rawDate);
@@ -180,7 +210,7 @@ const slugify = (text) => text ? text.toString().toLowerCase().trim()
                     startDate: rawDate,
                     endDate: endDate.toISOString().split('T')[0], 
                     spotsLeft: dateEntry.availabilityCount,
-                    optimizedImage: product.optimizedImage // <--- ADDED THIS LINE (for upcoming)
+                    // optimizedImage is already in 'product' from step 3
                 });
             });
         });
