@@ -9,7 +9,7 @@ export default async function handler(req, res) {
   
   // SPEED BOOST: Fresh for 60s, Serve Stale (Instant) for 1 Week
   // (This is standard browser caching, NOT database saving)
-  res.setHeader('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=604800');
+  //res.setHeader('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=604800');
   
   if (req.method === 'OPTIONS') { res.status(200).end(); return; }
 
