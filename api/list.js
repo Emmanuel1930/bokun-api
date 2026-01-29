@@ -79,7 +79,7 @@ export default async function handler(req, res) {
           durationHours: act.durationHours,
           
           // Keep Location
-          location: act.googlePlace?.name || act.locationCode?.location
+          //location: act.googlePlace?.name || act.locationCode?.location
           
           // 🗑️ DELETED: description, photos, videos, bookingQuestions, inclusions...
       };
