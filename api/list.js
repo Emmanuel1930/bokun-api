@@ -164,7 +164,7 @@ export default async function handler(req, res) {
         // DATE RANGE: 6 Months
         const today = new Date();
         const futureDate = new Date();
-        futureDate.setMonth(today.getMonth() + 6);
+        futureDate.setMonth(today.getMonth() + 7);
         const startStr = today.toISOString().split('T')[0];
         const endStr = futureDate.toISOString().split('T')[0];
 
