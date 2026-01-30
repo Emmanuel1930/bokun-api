@@ -55,7 +55,7 @@ export default async function handler(req, res) {
       return baseUrl.includes('?') ? `${baseUrl}&w=600` : `${baseUrl}?w=600`;
   };
 
-  // --- ✂️ THE DATA STRIPPER (NEW) ---
+  // ---  THE DATA STRIPPER (NEW) ---
   // This takes the HUGE product and returns only the 6 things we need.
   const simplifyProduct = (item) => {
       if (!item.activity) return item; // If it's a folder/list, keep it as is
@@ -74,9 +74,9 @@ export default async function handler(req, res) {
           price: act.nextDefaultPriceMoney?.amount || "Check Price",
           
           // Keep Duration
-          //durationWeeks: act.durationWeeks,
-          //durationDays: act.durationDays,
-          //durationHours: act.durationHours,
+          durationWeeks: act.durationWeeks,
+          durationDays: act.durationDays,
+          durationHours: act.durationHours,
           
           // Keep Location
           location: act.googlePlace?.name || act.locationCode?.location
