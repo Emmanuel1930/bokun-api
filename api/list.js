@@ -74,9 +74,9 @@ export default async function handler(req, res) {
           price: act.nextDefaultPriceMoney?.amount || "Check Price",
           
           // Keep Duration
-          durationWeeks: act.durationWeeks,
-          durationDays: act.durationDays,
-          durationHours: act.durationHours,
+          //durationWeeks: act.durationWeeks,
+          //durationDays: act.durationDays,
+          //durationHours: act.durationHours,
           
           // Keep Location
           location: act.googlePlace?.name || act.locationCode?.location
@@ -164,7 +164,7 @@ export default async function handler(req, res) {
         // DATE RANGE: 6 Months
         const today = new Date();
         const futureDate = new Date();
-        futureDate.setMonth(today.getMonth() + 7);
+        futureDate.setMonth(today.getMonth() + 6);
         const startStr = today.toISOString().split('T')[0];
         const endStr = futureDate.toISOString().split('T')[0];
 
