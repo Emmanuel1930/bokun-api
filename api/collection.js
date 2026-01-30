@@ -43,11 +43,15 @@ const formatItinerary = (items) => {
         const body = item.body || item.text || item.description || ""; 
         
         // This style mimics the 'card' look you liked before
-        return `<div class="itinerary-day-card" style="margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid #eee;">
-                  <span class="day-badge" style="font-weight: bold; color: #666; display: block; margin-bottom: 4px;">Day ${item.day || '?'}</span>
-                  <div class="day-title" style="font-size: 18px; font-weight: bold; margin-bottom: 8px;">${title}</div>
-                  <div class="day-body" style="font-size: 14px; line-height: 1.6;">${body}</div>
-                </div>`;
+return `
+<div class="timeline-item">
+    <div class="timeline-marker"></div>
+    <div class="timeline-content">
+        <span class="timeline-day">Day ${item.day || '?'}</span>
+        <h3 class="timeline-title">${title}</h3>
+        <div class="timeline-body">${body}</div>
+    </div>
+</div>`;
     }).join('');
   };
   
