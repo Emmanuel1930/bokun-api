@@ -170,26 +170,50 @@ export default async function handler(req, res) {
 
         const productsToCheck = Array.from(uniqueProducts.values());
 
-// 🚀 TURBO PARALLEL FETCH (The "Old Way")
-        // No waiting. Fire everything at once.
-        const availabilityPromises = productsToCheck.map(async (product) => {
-            try {
+// 🛡️ THE "POLITE & PERSISTENT" FETCH (Chunks of 5 + Retry Logic)
+        const results = [];
+        
+        while (productsToCheck.length > 0) {
+            // Process 5 items at a time
+            const chunk = productsToCheck.splice(0, 5); 
+            
+            const chunkPromises = chunk.map(async (product) => {
                 if (!product.id) return null;
                 const availPath = `/activity.json/${product.id}/availabilities?start=${startStr}&end=${endStr}&includeSoldOut=false`;
                 
-                // Fire the request immediately!
-                const availRes = await fetch(`https://api.bokun.io${availPath}`, { method: 'GET', headers: getHeaders('GET', availPath) });
-                
-                if (!availRes.ok) return null;
-                const dates = await availRes.json();
-                
+                // 🔥 NEW: Retry Helper
+                // If Bókun says "No" (Error), we wait and ask again up to 3 times.
+                const fetchWithRetry = async (retries = 3) => {
+                    try {
+                        // 1. Wait 100ms before asking (Polite)
+                        await new Promise(r => setTimeout(r, 100)); 
+                        
+                        const res = await fetch(`https://api.bokun.io${availPath}`, { method: 'GET', headers: getHeaders('GET', availPath) });
+                        
+                        // 2. If Error, RETRY instead of quitting
+                        if (!res.ok) {
+                            if (retries > 0) {
+                                // Wait 500ms before retrying
+                                await new Promise(r => setTimeout(r, 500));
+                                return fetchWithRetry(retries - 1); 
+                            }
+                            return null; // Gave up after 3 tries
+                        }
+                        return res.json();
+                    } catch (e) {
+                        if (retries > 0) return fetchWithRetry(retries - 1);
+                        return null;
+                    }
+                };
+
+                const dates = await fetchWithRetry();
                 if (dates?.length > 0) return { ...product, nextDates: dates };
                 return null;
-            } catch (e) { return null; }
-        });
-
-        // Wait for ALL requests to finish (should be fast!)
-        const results = (await Promise.all(availabilityPromises)).filter(p => p !== null);
+            });
+            
+            const chunkResults = await Promise.all(chunkPromises);
+            results.push(...chunkResults.filter(p => p !== null));
+        }
 
         let calendarEntries = [];
         const cutoffDate = new Date(); 
