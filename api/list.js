@@ -170,39 +170,26 @@ export default async function handler(req, res) {
 
         const productsToCheck = Array.from(uniqueProducts.values());
 
-        // ⚡ PARALLEL FETCH (Chunks of 10 to avoid Timeout)
-// ⚡ PARALLEL FETCH (Reduced Chunk Size to prevent "Missing Months")
-        const results = [];
-        
-        // 🐢 Slow down: Only fetch 4 products at a time (instead of 10)
-        // This prevents Bókun from blocking us for "spamming" requests.
-        while (productsToCheck.length > 0) {
-            const chunk = productsToCheck.splice(0, 4); 
-            
-            const chunkPromises = chunk.map(async (product) => {
-                try {
-                    if (!product.id) return null;
-                    const availPath = `/activity.json/${product.id}/availabilities?start=${startStr}&end=${endStr}&includeSoldOut=false`;
-                    
-                    // Add a tiny random delay (10-50ms) to make requests look more natural
-                    await new Promise(r => setTimeout(r, Math.random() * 50));
+// 🚀 TURBO PARALLEL FETCH (The "Old Way")
+        // No waiting. Fire everything at once.
+        const availabilityPromises = productsToCheck.map(async (product) => {
+            try {
+                if (!product.id) return null;
+                const availPath = `/activity.json/${product.id}/availabilities?start=${startStr}&end=${endStr}&includeSoldOut=false`;
+                
+                // Fire the request immediately!
+                const availRes = await fetch(`https://api.bokun.io${availPath}`, { method: 'GET', headers: getHeaders('GET', availPath) });
+                
+                if (!availRes.ok) return null;
+                const dates = await availRes.json();
+                
+                if (dates?.length > 0) return { ...product, nextDates: dates };
+                return null;
+            } catch (e) { return null; }
+        });
 
-                    const availRes = await fetch(`https://api.bokun.io${availPath}`, { method: 'GET', headers: getHeaders('GET', availPath) });
-                    
-                    if (!availRes.ok) {
-                        console.log(`⚠️ Failed to fetch dates for ${product.title}`);
-                        return null;
-                    }
-                    
-                    const dates = await availRes.json();
-                    if (dates?.length > 0) return { ...product, nextDates: dates };
-                    return null;
-                } catch (e) { return null; }
-            });
-            
-            const chunkResults = await Promise.all(chunkPromises);
-            results.push(...chunkResults.filter(p => p !== null));
-        }
+        // Wait for ALL requests to finish (should be fast!)
+        const results = (await Promise.all(availabilityPromises)).filter(p => p !== null);
 
         let calendarEntries = [];
         const cutoffDate = new Date(); 
