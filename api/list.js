@@ -170,34 +170,31 @@ export default async function handler(req, res) {
 
         const productsToCheck = Array.from(uniqueProducts.values());
 
-// 🛡️ THE "POLITE & PERSISTENT" FETCH (Chunks of 5 + Retry Logic)
+// 🚀 OPTIMIZED FETCH: Faster chunks to beat the 10s timeout
         const results = [];
         
         while (productsToCheck.length > 0) {
-            // Process 5 items at a time
-            const chunk = productsToCheck.splice(0, 5); 
+            // CHANGE 1: Increase chunk size from 5 to 8 (Faster)
+            const chunk = productsToCheck.splice(0, 8); 
             
             const chunkPromises = chunk.map(async (product) => {
                 if (!product.id) return null;
                 const availPath = `/activity.json/${product.id}/availabilities?start=${startStr}&end=${endStr}&includeSoldOut=false`;
                 
-                // 🔥 NEW: Retry Helper
-                // If Bókun says "No" (Error), we wait and ask again up to 3 times.
-                const fetchWithRetry = async (retries = 3) => {
+                const fetchWithRetry = async (retries = 2) => {
                     try {
-                        // 1. Wait 100ms before asking (Polite)
-                        await new Promise(r => setTimeout(r, 100)); 
+                        // CHANGE 2: Reduce delay from 100ms to 10ms
+                        await new Promise(r => setTimeout(r, 10)); 
                         
                         const res = await fetch(`https://api.bokun.io${availPath}`, { method: 'GET', headers: getHeaders('GET', availPath) });
                         
-                        // 2. If Error, RETRY instead of quitting
                         if (!res.ok) {
                             if (retries > 0) {
-                                // Wait 500ms before retrying
-                                await new Promise(r => setTimeout(r, 500));
+                                // CHANGE 3: Reduce retry wait from 500ms to 200ms
+                                await new Promise(r => setTimeout(r, 200));
                                 return fetchWithRetry(retries - 1); 
                             }
-                            return null; // Gave up after 3 tries
+                            return null;
                         }
                         return res.json();
                     } catch (e) {
@@ -214,7 +211,6 @@ export default async function handler(req, res) {
             const chunkResults = await Promise.all(chunkPromises);
             results.push(...chunkResults.filter(p => p !== null));
         }
-
         let calendarEntries = [];
         const cutoffDate = new Date(); 
         cutoffDate.setDate(today.getDate() - 1); 
