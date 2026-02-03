@@ -8,7 +8,6 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
   
   // SPEED BOOST: Fresh for 60s, Serve Stale (Instant) for 1 Week
-  // (This is standard browser caching, NOT database saving)
   res.setHeader('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=604800');
   
   if (req.method === 'OPTIONS') { res.status(200).end(); return; }
@@ -165,9 +164,11 @@ export default async function handler(req, res) {
         const today = new Date();
         const futureDate = new Date();
         futureDate.setMonth(today.getMonth() + 6);
-        const startStr = today.toISOString().split('T')[0];
+        // 🔥 FIX 1: Fetch from YESTERDAY
+        const yesterday = new Date(today);
+        yesterday.setDate(today.getDate() - 1);
+        const startStr = yesterday.toISOString().split('T')[0]; // <--- NEW (Good)
         const endStr = futureDate.toISOString().split('T')[0];
-
         const productsToCheck = Array.from(uniqueProducts.values());
 
 // 🚀 OPTIMIZED FETCH: Faster chunks to beat the 10s timeout
