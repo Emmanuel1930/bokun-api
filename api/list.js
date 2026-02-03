@@ -212,9 +212,11 @@ export default async function handler(req, res) {
             const chunkResults = await Promise.all(chunkPromises);
             results.push(...chunkResults.filter(p => p !== null));
         }
+      
         let calendarEntries = [];
+        // This ensures trips stay visible until the date actually changes to tomorrow.
         const cutoffDate = new Date(); 
-        cutoffDate.setDate(today.getDate() - 1); 
+        cutoffDate.setHours(0,0,0,0);
 
         results.forEach(product => {
             product.nextDates.forEach(dateEntry => {
