@@ -237,6 +237,12 @@ export default async function handler(req, res) {
                     endDate: endDate.toISOString().split('T')[0], 
                     spotsLeft: dateEntry.availabilityCount,
                     // optimizedImage is already in 'product' from step 3
+                  // 🕵️‍♂️ DEBUGGING: Send the RAW price data to the browser
+                    // This lets you see EXACTLY what Bókun is sending for this date
+                    debug_defaultPrice: dateEntry.defaultPrice,
+                    debug_prices: dateEntry.prices,
+                    debug_fullEntry: dateEntry // <--- This contains EVERYTHING
+        
                 });
             });
         });
