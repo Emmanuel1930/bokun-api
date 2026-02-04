@@ -218,10 +218,13 @@ export default async function handler(req, res) {
         const cutoffDate = new Date(); 
         cutoffDate.setHours(0,0,0,0);
 
-        results.forEach(product => {
+results.forEach(product => {
             product.nextDates.forEach(dateEntry => {
+                // --- 📅 DATE LOGIC (Fixing Disappearing Trips) ---
                 const rawDate = dateEntry.date || dateEntry.startTime.split('T')[0];
                 const startDate = new Date(rawDate);
+                
+                // If the date is before "Midnight Today", skip it (but keep today visible)
                 if (startDate < cutoffDate) return;
 
                 let endDate = new Date(startDate);
@@ -231,13 +234,31 @@ export default async function handler(req, res) {
                 if (daysToAdd < 0) daysToAdd = 0; 
                 endDate.setDate(startDate.getDate() + daysToAdd);
 
+                // --- 💰 PRICE LOGIC (Fixing Dynamic Pricing) ---
+                // 1. Start with the generic "From" price
+                let finalPrice = product.price; 
+
+                // 2. Check if this specific date has a special price (Price Schedule)
+                if (dateEntry.pricesByRate && dateEntry.pricesByRate.length > 0) {
+                    const rate = dateEntry.pricesByRate[0];
+                    
+                    // Case A: Price per Person (Standard)
+                    if (rate.pricePerCategoryUnit && rate.pricePerCategoryUnit.length > 0) {
+                        finalPrice = rate.pricePerCategoryUnit[0].amount.amount;
+                    } 
+                    // Case B: Price per Booking (Private)
+                    else if (rate.pricePerBooking) {
+                        finalPrice = rate.pricePerBooking.amount;
+                    }
+                }
+
+                // --- 📤 PUSH TO LIST ---
                 calendarEntries.push({
                     ...product,
                     startDate: rawDate,
                     endDate: endDate.toISOString().split('T')[0], 
                     spotsLeft: dateEntry.availabilityCount,
-                    // optimizedImage is already in 'product' from step 3
-        
+                    dateSpecificPrice: finalPrice // <--- The Accurate Price!
                 });
             });
         });
