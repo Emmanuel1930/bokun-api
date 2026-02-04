@@ -218,7 +218,7 @@ export default async function handler(req, res) {
         const cutoffDate = new Date(); 
         cutoffDate.setHours(0,0,0,0);
 
-results.forEach(product => {
+           results.forEach(product => {
             product.nextDates.forEach(dateEntry => {
                 // --- 📅 DATE LOGIC (Fixing Disappearing Trips) ---
                 const rawDate = dateEntry.date || dateEntry.startTime.split('T')[0];
