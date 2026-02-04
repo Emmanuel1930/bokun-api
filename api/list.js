@@ -7,7 +7,7 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
   
-  // Cache Settings
+  // SPEED BOOST: Cache for 60s
   res.setHeader('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=604800');
   
   if (req.method === 'OPTIONS') { res.status(200).end(); return; }
@@ -31,7 +31,7 @@ export default async function handler(req, res) {
     .replace(/[^\w\-]+/g, '')
     .replace(/\-\-+/g, '-') : "";
 
-  // --- IMAGE OPTIMIZER ---
+  // --- 🖼️ IMAGE OPTIMIZER ---
   const getBestImage = (activity) => {
       let photo = activity.keyPhoto;
       if (!photo && activity.photos && activity.photos.length > 0) {
@@ -95,7 +95,6 @@ export default async function handler(req, res) {
             } 
             else if (node.size > 0 && (!node.children || node.children.length === 0)) {
                 const realItems = await fetchProductsForList(node.id);
-                
                 const processedChildren = await Promise.all(realItems.map(async (item) => {
                     if (item.activity) {
                         return simplifyProduct(item);
@@ -109,13 +108,12 @@ export default async function handler(req, res) {
         return Promise.all(promises);
     };
 
-    // Hydrate the tree
     const hydratedData = await hydrateTree(listData, isUpcomingMode);
     
     // --- FAST EXIT: STANDARD MODE ---
     if (!isUpcomingMode) return res.status(200).json(hydratedData);
 
-    // --- UPCOMING MODE ONLY (The Complex Part) ---
+    // --- UPCOMING MODE ONLY ---
     if (isUpcomingMode) {
         let uniqueProducts = new Map(); 
         
@@ -188,24 +186,24 @@ export default async function handler(req, res) {
             results.push(...chunkResults.filter(p => p !== null));
         }
        
-        // ======================================================
-        // ✅ 3. FLATTEN & PROCESS DATES (CRITICAL FIX)
-        // ======================================================
-        
-        const calendarEntries = []; // <--- Defined here!
-        const cutoffDate = new Date(); // <--- Defined here!
-        cutoffDate.setDate(cutoffDate.getDate() - 1); 
-        cutoffDate.setHours(0, 0, 0, 0);
+        // --- 3. FLATTEN & PROCESS DATES (Clean Version) ---
+        let calendarEntries = [];
+        const cutoffDate = new Date(); 
+        cutoffDate.setDate(cutoffDate.getDate() - 1); // Yesterday
+        cutoffDate.setHours(0,0,0,0);
 
         results.forEach(product => {
             if (!product.nextDates) return;
 
             product.nextDates.forEach(dateEntry => {
-                // --- 📅 DATE LOGIC ---
-                // Safety check: Ensure rawDate exists
-                const rawDate = dateEntry.date || (dateEntry.startTime ? dateEntry.startTime.split('T')[0] : null);
-                
-                if (!rawDate) return; 
+                // 🛑 SAFETY FIX: Prevents 500 Error on Bad Dates
+                let rawDate = dateEntry.date;
+                // If no date timestamp, try parsing startTime (only if it has 'T')
+                if (!rawDate && dateEntry.startTime && dateEntry.startTime.includes('T')) {
+                     rawDate = dateEntry.startTime.split('T')[0];
+                }
+
+                if (!rawDate) return; // Skip if date is invalid
 
                 const startDate = new Date(rawDate);
                 if (startDate < cutoffDate) return;
@@ -217,43 +215,21 @@ export default async function handler(req, res) {
                 if (daysToAdd < 0) daysToAdd = 0; 
                 endDate.setDate(startDate.getDate() + daysToAdd);
 
-                // --- 💰 PRICE LOGIC ---
-                let finalPrice = product.price; 
+                // No Smart Math: Just use the product's base price
+                let finalPrice = product.price;
 
-                if (dateEntry.pricesByRate && dateEntry.pricesByRate.length > 0) {
-                    // 1. Try Default Rate ID first (Smart Pricing)
-                    let targetRate = dateEntry.pricesByRate.find(r => r.rateId === dateEntry.defaultRateId);
-                    // 2. Fallback to First Rate
-                    if (!targetRate) targetRate = dateEntry.pricesByRate[0];
-
-                    if (targetRate) {
-                        if (targetRate.pricePerCategoryUnit && targetRate.pricePerCategoryUnit.length > 0) {
-                            finalPrice = targetRate.pricePerCategoryUnit[0].amount.amount;
-                        } else if (targetRate.pricePerBooking) {
-                            finalPrice = targetRate.pricePerBooking.amount;
-                        }
-                    }
-                }
-
-                // --- 📤 PUSH TO LIST ---
                 calendarEntries.push({
-                    ...product, 
+                    ...product,
                     startDate: rawDate,
                     endDate: endDate.toISOString().split('T')[0], 
                     spotsLeft: dateEntry.availabilityCount,
-                    dateSpecificPrice: finalPrice 
+                    dateSpecificPrice: finalPrice // Standard "From" Price
                 });
             });
         });
 
-        // Sort by date
         calendarEntries.sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
-
-        // ✅ RETURN THE CALENDAR ENTRIES
         return res.status(200).json(calendarEntries);
     }
-  } catch (error) {
-    console.error("API Error:", error);
-    res.status(500).json({ error: error.message });
-  }
+  } catch (error) { res.status(500).json({ error: error.message }); }
 }
