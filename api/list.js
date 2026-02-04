@@ -219,15 +219,22 @@ export default async function handler(req, res) {
         cutoffDate.setHours(0,0,0,0);
 
            // --- 3. FLATTEN & PROCESS DATES ---
+    // --- 3. FLATTEN & PROCESS DATES ---
+    
+    // 🛡️ RE-DEFINE THE CUTOFF DATE HERE (To prevent crashes)
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - 1); // Allow "Yesterday" (Buffer)
+    cutoffDate.setHours(0, 0, 0, 0);
+
     results.forEach(product => {
       if (!product.nextDates) return;
 
       product.nextDates.forEach(dateEntry => {
-        // --- 📅 DATE LOGIC (Fixing Disappearing Trips) ---
+        // --- 📅 DATE LOGIC ---
         const rawDate = dateEntry.date || dateEntry.startTime.split('T')[0];
         const startDate = new Date(rawDate);
         
-        // If the date is before "Midnight Today", skip it (but keep today visible)
+        // Now 'cutoffDate' is definitely defined, so this won't crash!
         if (startDate < cutoffDate) return;
 
         let endDate = new Date(startDate);
@@ -242,7 +249,6 @@ export default async function handler(req, res) {
 
         if (dateEntry.pricesByRate && dateEntry.pricesByRate.length > 0) {
             // 1. Try to find the rate that matches the "Default Rate ID"
-            // This ensures we get the "Standard" price (e.g. 600), not "Private" (e.g. 1200)
             let targetRate = dateEntry.pricesByRate.find(r => r.rateId === dateEntry.defaultRateId);
             
             // 2. Safety Net: If no default match found, take the first one
@@ -252,12 +258,9 @@ export default async function handler(req, res) {
 
             // 3. Extract the actual amount
             if (targetRate) {
-                // Case A: Price per Person (Most common)
                 if (targetRate.pricePerCategoryUnit && targetRate.pricePerCategoryUnit.length > 0) {
                     finalPrice = targetRate.pricePerCategoryUnit[0].amount.amount;
-                } 
-                // Case B: Price per Booking (Private tours)
-                else if (targetRate.pricePerBooking) {
+                } else if (targetRate.pricePerBooking) {
                     finalPrice = targetRate.pricePerBooking.amount;
                 }
             }
@@ -265,11 +268,11 @@ export default async function handler(req, res) {
 
         // --- 📤 PUSH TO LIST ---
         calendarEntries.push({
-            ...product, // Start with generic product info
+            ...product, 
             startDate: rawDate,
             endDate: endDate.toISOString().split('T')[0], 
             spotsLeft: dateEntry.availabilityCount,
-            dateSpecificPrice: finalPrice // <--- accurately calculated seasonal price!
+            dateSpecificPrice: finalPrice 
         });
       });
     });
@@ -277,7 +280,7 @@ export default async function handler(req, res) {
     // Sort by date (Soonest trips first)
     calendarEntries.sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
 
-    // ✅ RETURN THE CALENDAR ENTRIES (Not the parent products!)
+    // ✅ RETURN THE CALENDAR ENTRIES
     return res.status(200).json(calendarEntries);
 
   } catch (error) {
