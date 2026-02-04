@@ -216,21 +216,25 @@ export default async function handler(req, res) {
            // --- 3. FLATTEN & PROCESS DATES ---
     // --- 3. FLATTEN & PROCESS DATES ---
     
-    // 🛡️ RE-DEFINE THE CUTOFF DATE HERE (To prevent crashes)
-    // 🛡️ RE-DEFINE THE CUTOFF DATE HERE
-        const cutoffDate = new Date();
-        cutoffDate.setDate(cutoffDate.getDate() - 1); 
-        cutoffDate.setHours(0, 0, 0, 0);
+    // 1. ✅ CREATE THE MISSING LIST (This was causing the crash!)
+    const calendarEntries = []; 
+
+    // 2. Define Cutoff Date (Yesterday)
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - 1); 
+    cutoffDate.setHours(0, 0, 0, 0);
 
     results.forEach(product => {
       if (!product.nextDates) return;
 
       product.nextDates.forEach(dateEntry => {
         // --- 📅 DATE LOGIC ---
-        const rawDate = dateEntry.date || dateEntry.startTime.split('T')[0];
-        const startDate = new Date(rawDate);
+        // Safety Fix: Ensure we have a date string before splitting, otherwise it crashes
+        const rawDate = dateEntry.date || (dateEntry.startTime ? dateEntry.startTime.split('T')[0] : null);
         
-        // Now 'cutoffDate' is definitely defined, so this won't crash!
+        if (!rawDate) return; // Skip if Bókun sends no date
+
+        const startDate = new Date(rawDate);
         if (startDate < cutoffDate) return;
 
         let endDate = new Date(startDate);
@@ -240,19 +244,14 @@ export default async function handler(req, res) {
         if (daysToAdd < 0) daysToAdd = 0; 
         endDate.setDate(startDate.getDate() + daysToAdd);
 
-        // --- 💰 SMART PRICE LOGIC (Using Default Rate ID) ---
-        let finalPrice = product.price; // Fallback to "From" price
+        // --- 💰 PRICE LOGIC ---
+        let finalPrice = product.price; 
 
         if (dateEntry.pricesByRate && dateEntry.pricesByRate.length > 0) {
-            // 1. Try to find the rate that matches the "Default Rate ID"
+            // Try to find default rate, otherwise fallback to first rate
             let targetRate = dateEntry.pricesByRate.find(r => r.rateId === dateEntry.defaultRateId);
-            
-            // 2. Safety Net: If no default match found, take the first one
-            if (!targetRate) {
-                targetRate = dateEntry.pricesByRate[0];
-            }
+            if (!targetRate) targetRate = dateEntry.pricesByRate[0];
 
-            // 3. Extract the actual amount
             if (targetRate) {
                 if (targetRate.pricePerCategoryUnit && targetRate.pricePerCategoryUnit.length > 0) {
                     finalPrice = targetRate.pricePerCategoryUnit[0].amount.amount;
@@ -273,10 +272,10 @@ export default async function handler(req, res) {
       });
     });
 
-    // Sort by date (Soonest trips first)
+    // Sort by date
     calendarEntries.sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
 
-    // ✅ RETURN THE CALENDAR ENTRIES
+    // ✅ RETURN THE RESULT
     return res.status(200).json(calendarEntries);
 
   } catch (error) {
