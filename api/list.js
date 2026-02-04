@@ -212,11 +212,6 @@ export default async function handler(req, res) {
             const chunkResults = await Promise.all(chunkPromises);
             results.push(...chunkResults.filter(p => p !== null));
         }
-      
-        let calendarEntries = [];
-        // This ensures trips stay visible until the date actually changes to tomorrow.
-        const cutoffDate = new Date(); 
-        cutoffDate.setHours(0,0,0,0);
 
            // --- 3. FLATTEN & PROCESS DATES ---
     // --- 3. FLATTEN & PROCESS DATES ---
