@@ -217,9 +217,10 @@ export default async function handler(req, res) {
     // --- 3. FLATTEN & PROCESS DATES ---
     
     // 🛡️ RE-DEFINE THE CUTOFF DATE HERE (To prevent crashes)
-    const cutoffDate = new Date();
-    cutoffDate.setDate(cutoffDate.getDate() - 1); // Allow "Yesterday" (Buffer)
-    cutoffDate.setHours(0, 0, 0, 0);
+    // 🛡️ RE-DEFINE THE CUTOFF DATE HERE
+        const cutoffDate = new Date();
+        cutoffDate.setDate(cutoffDate.getDate() - 1); 
+        cutoffDate.setHours(0, 0, 0, 0);
 
     results.forEach(product => {
       if (!product.nextDates) return;
