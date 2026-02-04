@@ -7,7 +7,7 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
   
-  // SPEED BOOST: Fresh for 60s, Serve Stale (Instant) for 1 Week
+  // Cache Settings
   res.setHeader('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=604800');
   
   if (req.method === 'OPTIONS') { res.status(200).end(); return; }
@@ -31,13 +31,9 @@ export default async function handler(req, res) {
     .replace(/[^\w\-]+/g, '')
     .replace(/\-\-+/g, '-') : "";
 
-  // --- 🖼️ IMAGE OPTIMIZER (UPDATED WITH FALLBACK) ---
-  // Logic: Try KeyPhoto -> Photo 1 -> Photo 2 -> Photo 3 -> Placeholder
+  // --- IMAGE OPTIMIZER ---
   const getBestImage = (activity) => {
-      // 1. Try Key Photo first
       let photo = activity.keyPhoto;
-
-      // 2. If missing, try the first 3 photos in the list
       if (!photo && activity.photos && activity.photos.length > 0) {
           photo = activity.photos[0] || activity.photos[1] || activity.photos[2];
       }
@@ -54,33 +50,21 @@ export default async function handler(req, res) {
       return baseUrl.includes('?') ? `${baseUrl}&w=600` : `${baseUrl}?w=600`;
   };
 
-  // ---  THE DATA STRIPPER (NEW) ---
-  // This takes the HUGE product and returns only the 6 things we need.
+  // --- DATA STRIPPER ---
   const simplifyProduct = (item) => {
-      if (!item.activity) return item; // If it's a folder/list, keep it as is
+      if (!item.activity) return item; 
       
       const act = item.activity;
       return {
-          // Keep Identifiers
           id: act.id,
           title: act.title,
           slug: slugify(act.title),
-          
-          // Generate ONE image string (Delete the huge photos array)
           optimizedImage: getBestImage(act),
-          
-          // Keep Price (Just the number)
           price: act.nextDefaultPriceMoney?.amount || "Check Price",
-          
-          // Keep Duration
           durationWeeks: act.durationWeeks,
           durationDays: act.durationDays,
           durationHours: act.durationHours,
-          
-          // Keep Location
           location: act.googlePlace?.name || act.locationCode?.location
-          
-          // 🗑️ DELETED: description, photos, videos, bookingQuestions, inclusions...
       };
   };
 
@@ -104,7 +88,6 @@ export default async function handler(req, res) {
     // 3. RECURSIVE HYDRATION
     const hydrateTree = async (nodes, onlyGroupTours = false) => {
         const promises = nodes.map(async (node) => {
-            // Skip private folders if we are in upcoming mode (Optimization)
             if (onlyGroupTours && (node.title.includes("Private") || node.title.includes("School"))) return node; 
 
             if (node.children && node.children.length > 0) {
@@ -114,7 +97,6 @@ export default async function handler(req, res) {
                 const realItems = await fetchProductsForList(node.id);
                 
                 const processedChildren = await Promise.all(realItems.map(async (item) => {
-                    // 🔥 HERE IS THE MAGIC: We simplify the product IMMEDIATELY
                     if (item.activity) {
                         return simplifyProduct(item);
                     }
@@ -127,14 +109,13 @@ export default async function handler(req, res) {
         return Promise.all(promises);
     };
 
-    // Hydrate the tree (Now contains "Slim" products)
+    // Hydrate the tree
     const hydratedData = await hydrateTree(listData, isUpcomingMode);
     
     // --- FAST EXIT: STANDARD MODE ---
     if (!isUpcomingMode) return res.status(200).json(hydratedData);
 
-
-    // --- UPCOMING MODE ONLY ---
+    // --- UPCOMING MODE ONLY (The Complex Part) ---
     if (isUpcomingMode) {
         let uniqueProducts = new Map(); 
         
@@ -150,7 +131,6 @@ export default async function handler(req, res) {
         const collect = (nodes) => {
             nodes.forEach(node => {
                 if (node.children && node.children.length > 0) collect(node.children);
-                // Since we already ran simplifyProduct, these nodes are now the slim versions
                 else if (node.id && node.title) {
                     if (!uniqueProducts.has(node.id)) uniqueProducts.set(node.id, node);
                 }
@@ -160,22 +140,21 @@ export default async function handler(req, res) {
         if (groupFolder) collect(groupFolder.children || []);
         else collect(hydratedData); 
 
-        // DATE RANGE: 6 Months
+        // DATE RANGE
         const today = new Date();
         const futureDate = new Date();
         futureDate.setMonth(today.getMonth() + 6);
-        // 🔥 FIX 1: Fetch from YESTERDAY
+        
         const yesterday = new Date(today);
         yesterday.setDate(today.getDate() - 1);
-        const startStr = yesterday.toISOString().split('T')[0]; // <--- NEW (Good)
+        const startStr = yesterday.toISOString().split('T')[0];
         const endStr = futureDate.toISOString().split('T')[0];
         const productsToCheck = Array.from(uniqueProducts.values());
 
-// 🚀 OPTIMIZED FETCH: Faster chunks to beat the 10s timeout
+        // 🚀 OPTIMIZED FETCH
         const results = [];
         
         while (productsToCheck.length > 0) {
-            // CHANGE 1: Increase chunk size from 5 to 8 (Faster)
             const chunk = productsToCheck.splice(0, 8); 
             
             const chunkPromises = chunk.map(async (product) => {
@@ -184,14 +163,10 @@ export default async function handler(req, res) {
                 
                 const fetchWithRetry = async (retries = 2) => {
                     try {
-                        // CHANGE 2: Reduce delay from 100ms to 10ms
                         await new Promise(r => setTimeout(r, 10)); 
-                        
                         const res = await fetch(`https://api.bokun.io${availPath}`, { method: 'GET', headers: getHeaders('GET', availPath) });
-                        
                         if (!res.ok) {
                             if (retries > 0) {
-                                // CHANGE 3: Reduce retry wait from 500ms to 200ms
                                 await new Promise(r => setTimeout(r, 200));
                                 return fetchWithRetry(retries - 1); 
                             }
@@ -212,72 +187,71 @@ export default async function handler(req, res) {
             const chunkResults = await Promise.all(chunkPromises);
             results.push(...chunkResults.filter(p => p !== null));
         }
-
-           // --- 3. FLATTEN & PROCESS DATES ---
-    // --- 3. FLATTEN & PROCESS DATES ---
-    
-    // 1. ✅ CREATE THE MISSING LIST (This was causing the crash!)
-    const calendarEntries = []; 
-
-    // 2. Define Cutoff Date (Yesterday)
-    const cutoffDate = new Date();
-    cutoffDate.setDate(cutoffDate.getDate() - 1); 
-    cutoffDate.setHours(0, 0, 0, 0);
-
-    results.forEach(product => {
-      if (!product.nextDates) return;
-
-      product.nextDates.forEach(dateEntry => {
-        // --- 📅 DATE LOGIC ---
-        // Safety Fix: Ensure we have a date string before splitting, otherwise it crashes
-        const rawDate = dateEntry.date || (dateEntry.startTime ? dateEntry.startTime.split('T')[0] : null);
+       
+        // ======================================================
+        // ✅ 3. FLATTEN & PROCESS DATES (CRITICAL FIX)
+        // ======================================================
         
-        if (!rawDate) return; // Skip if Bókun sends no date
+        const calendarEntries = []; // <--- Defined here!
+        const cutoffDate = new Date(); // <--- Defined here!
+        cutoffDate.setDate(cutoffDate.getDate() - 1); 
+        cutoffDate.setHours(0, 0, 0, 0);
 
-        const startDate = new Date(rawDate);
-        if (startDate < cutoffDate) return;
+        results.forEach(product => {
+            if (!product.nextDates) return;
 
-        let endDate = new Date(startDate);
-        let daysToAdd = 0;
-        if (product.durationWeeks) daysToAdd = (product.durationWeeks * 7) - 1;
-        else if (product.durationDays) daysToAdd = product.durationDays - 1;
-        if (daysToAdd < 0) daysToAdd = 0; 
-        endDate.setDate(startDate.getDate() + daysToAdd);
+            product.nextDates.forEach(dateEntry => {
+                // --- 📅 DATE LOGIC ---
+                // Safety check: Ensure rawDate exists
+                const rawDate = dateEntry.date || (dateEntry.startTime ? dateEntry.startTime.split('T')[0] : null);
+                
+                if (!rawDate) return; 
 
-        // --- 💰 PRICE LOGIC ---
-        let finalPrice = product.price; 
+                const startDate = new Date(rawDate);
+                if (startDate < cutoffDate) return;
 
-        if (dateEntry.pricesByRate && dateEntry.pricesByRate.length > 0) {
-            // Try to find default rate, otherwise fallback to first rate
-            let targetRate = dateEntry.pricesByRate.find(r => r.rateId === dateEntry.defaultRateId);
-            if (!targetRate) targetRate = dateEntry.pricesByRate[0];
+                let endDate = new Date(startDate);
+                let daysToAdd = 0;
+                if (product.durationWeeks) daysToAdd = (product.durationWeeks * 7) - 1;
+                else if (product.durationDays) daysToAdd = product.durationDays - 1;
+                if (daysToAdd < 0) daysToAdd = 0; 
+                endDate.setDate(startDate.getDate() + daysToAdd);
 
-            if (targetRate) {
-                if (targetRate.pricePerCategoryUnit && targetRate.pricePerCategoryUnit.length > 0) {
-                    finalPrice = targetRate.pricePerCategoryUnit[0].amount.amount;
-                } else if (targetRate.pricePerBooking) {
-                    finalPrice = targetRate.pricePerBooking.amount;
+                // --- 💰 PRICE LOGIC ---
+                let finalPrice = product.price; 
+
+                if (dateEntry.pricesByRate && dateEntry.pricesByRate.length > 0) {
+                    // 1. Try Default Rate ID first (Smart Pricing)
+                    let targetRate = dateEntry.pricesByRate.find(r => r.rateId === dateEntry.defaultRateId);
+                    // 2. Fallback to First Rate
+                    if (!targetRate) targetRate = dateEntry.pricesByRate[0];
+
+                    if (targetRate) {
+                        if (targetRate.pricePerCategoryUnit && targetRate.pricePerCategoryUnit.length > 0) {
+                            finalPrice = targetRate.pricePerCategoryUnit[0].amount.amount;
+                        } else if (targetRate.pricePerBooking) {
+                            finalPrice = targetRate.pricePerBooking.amount;
+                        }
+                    }
                 }
-            }
-        }
 
-        // --- 📤 PUSH TO LIST ---
-        calendarEntries.push({
-            ...product, 
-            startDate: rawDate,
-            endDate: endDate.toISOString().split('T')[0], 
-            spotsLeft: dateEntry.availabilityCount,
-            dateSpecificPrice: finalPrice 
+                // --- 📤 PUSH TO LIST ---
+                calendarEntries.push({
+                    ...product, 
+                    startDate: rawDate,
+                    endDate: endDate.toISOString().split('T')[0], 
+                    spotsLeft: dateEntry.availabilityCount,
+                    dateSpecificPrice: finalPrice 
+                });
+            });
         });
-      });
-    });
 
-    // Sort by date
-    calendarEntries.sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
+        // Sort by date
+        calendarEntries.sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
 
-    // ✅ RETURN THE RESULT
-    return res.status(200).json(calendarEntries);
-
+        // ✅ RETURN THE CALENDAR ENTRIES
+        return res.status(200).json(calendarEntries);
+    }
   } catch (error) {
     console.error("API Error:", error);
     res.status(500).json({ error: error.message });
