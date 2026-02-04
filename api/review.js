@@ -8,7 +8,7 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
   
   // Cache for 1 hour (Reviews don't change every minute)
-  res.setHeader('Cache-Control', 'public, s-maxage=3600, stale-while-revalidate=86400');
+  res.setHeader('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=86400');
 
   if (req.method === 'OPTIONS') { res.status(200).end(); return; }
 
@@ -36,22 +36,30 @@ export default async function handler(req, res) {
   try {
     // 1. FETCH REVIEWS FROM BÓKUN
     // We search for ALL reviews (pageSize: 300 to be safe, you can increase if needed)
+// 1. FETCH REVIEWS FROM BÓKUN (Updated to POST)
     const reviewPath = '/activity-review.json/search';
+    const url = `https://api.bokun.io${reviewPath}`;
     
-    // Note: Bókun Search often requires a POST, but a GET with query params works for general lists too.
-    // If this fails, we might need to switch to POST, but let's try the standard GET first.
-    const url = `https://api.bokun.io${reviewPath}?page=1&pageSize=300`;
-    
-    const response = await fetch(url, { method: 'GET', headers: getHeaders('GET', reviewPath) });
-    
+    // We send a JSON body with filters (even if empty) to satisfy the POST requirement
+    const bodyPayload = JSON.stringify({
+        "page": 1,
+        "pageSize": 300,
+        "lang": "en"
+    });
+
+    const response = await fetch(url, { 
+        method: 'POST', 
+        headers: getHeaders('POST', reviewPath), // <--- Important: Signature must match POST
+        body: bodyPayload
+    });
+
     if (!response.ok) {
-       // Debugging: If Bókun rejects it, show us why
        const txt = await response.text();
        throw new Error(`Bokun API Error: ${response.status} - ${txt}`);
     }
 
     const rawData = await response.json();
-    const items = rawData.items || [];
+    const items = rawData.items || []; 
 
     // 2. TRANSFORM DATA (The Magic Step 🎩)
     const processedReviews = items.map(item => {
