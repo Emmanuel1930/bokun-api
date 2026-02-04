@@ -218,53 +218,70 @@ export default async function handler(req, res) {
         const cutoffDate = new Date(); 
         cutoffDate.setHours(0,0,0,0);
 
-           results.forEach(product => {
-            product.nextDates.forEach(dateEntry => {
-                // --- 📅 DATE LOGIC (Fixing Disappearing Trips) ---
-                const rawDate = dateEntry.date || dateEntry.startTime.split('T')[0];
-                const startDate = new Date(rawDate);
-                
-                // If the date is before "Midnight Today", skip it (but keep today visible)
-                if (startDate < cutoffDate) return;
+           // --- 3. FLATTEN & PROCESS DATES ---
+    results.forEach(product => {
+      if (!product.nextDates) return;
 
-                let endDate = new Date(startDate);
-                let daysToAdd = 0;
-                if (product.durationWeeks) daysToAdd = (product.durationWeeks * 7) - 1;
-                else if (product.durationDays) daysToAdd = product.durationDays - 1;
-                if (daysToAdd < 0) daysToAdd = 0; 
-                endDate.setDate(startDate.getDate() + daysToAdd);
+      product.nextDates.forEach(dateEntry => {
+        // --- 📅 DATE LOGIC (Fixing Disappearing Trips) ---
+        const rawDate = dateEntry.date || dateEntry.startTime.split('T')[0];
+        const startDate = new Date(rawDate);
+        
+        // If the date is before "Midnight Today", skip it (but keep today visible)
+        if (startDate < cutoffDate) return;
 
-                // --- 💰 PRICE LOGIC (Fixing Dynamic Pricing) ---
-                // 1. Start with the generic "From" price
-                let finalPrice = product.price; 
+        let endDate = new Date(startDate);
+        let daysToAdd = 0;
+        if (product.durationWeeks) daysToAdd = (product.durationWeeks * 7) - 1;
+        else if (product.durationDays) daysToAdd = product.durationDays - 1;
+        if (daysToAdd < 0) daysToAdd = 0; 
+        endDate.setDate(startDate.getDate() + daysToAdd);
 
-                // 2. Check if this specific date has a special price (Price Schedule)
-                if (dateEntry.pricesByRate && dateEntry.pricesByRate.length > 0) {
-                    const rate = dateEntry.pricesByRate[0];
-                    
-                    // Case A: Price per Person (Standard)
-                    if (rate.pricePerCategoryUnit && rate.pricePerCategoryUnit.length > 0) {
-                        finalPrice = rate.pricePerCategoryUnit[0].amount.amount;
-                    } 
-                    // Case B: Price per Booking (Private)
-                    else if (rate.pricePerBooking) {
-                        finalPrice = rate.pricePerBooking.amount;
-                    }
+        // --- 💰 SMART PRICE LOGIC (Using Default Rate ID) ---
+        let finalPrice = product.price; // Fallback to "From" price
+
+        if (dateEntry.pricesByRate && dateEntry.pricesByRate.length > 0) {
+            // 1. Try to find the rate that matches the "Default Rate ID"
+            // This ensures we get the "Standard" price (e.g. 600), not "Private" (e.g. 1200)
+            let targetRate = dateEntry.pricesByRate.find(r => r.rateId === dateEntry.defaultRateId);
+            
+            // 2. Safety Net: If no default match found, take the first one
+            if (!targetRate) {
+                targetRate = dateEntry.pricesByRate[0];
+            }
+
+            // 3. Extract the actual amount
+            if (targetRate) {
+                // Case A: Price per Person (Most common)
+                if (targetRate.pricePerCategoryUnit && targetRate.pricePerCategoryUnit.length > 0) {
+                    finalPrice = targetRate.pricePerCategoryUnit[0].amount.amount;
+                } 
+                // Case B: Price per Booking (Private tours)
+                else if (targetRate.pricePerBooking) {
+                    finalPrice = targetRate.pricePerBooking.amount;
                 }
+            }
+        }
 
-                // --- 📤 PUSH TO LIST ---
-                calendarEntries.push({
-                    ...product,
-                    startDate: rawDate,
-                    endDate: endDate.toISOString().split('T')[0], 
-                    spotsLeft: dateEntry.availabilityCount,
-                    dateSpecificPrice: finalPrice // <--- The Accurate Price!
-                });
-            });
+        // --- 📤 PUSH TO LIST ---
+        calendarEntries.push({
+            ...product, // Start with generic product info
+            startDate: rawDate,
+            endDate: endDate.toISOString().split('T')[0], 
+            spotsLeft: dateEntry.availabilityCount,
+            dateSpecificPrice: finalPrice // <--- accurately calculated seasonal price!
         });
+      });
+    });
 
-        calendarEntries.sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
-        return res.status(200).json(calendarEntries);
-    }
-  } catch (error) { res.status(500).json({ error: error.message }); }
+    // Sort by date (Soonest trips first)
+    calendarEntries.sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
+
+    // ✅ RETURN THE CALENDAR ENTRIES (Not the parent products!)
+    return res.status(200).json(calendarEntries);
+
+  } catch (error) {
+    console.error("API Error:", error);
+    res.status(500).json({ error: error.message });
+  }
 }
