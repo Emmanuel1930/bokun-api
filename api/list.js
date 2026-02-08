@@ -50,17 +50,49 @@ export default async function handler(req, res) {
       return baseUrl.includes('?') ? `${baseUrl}&w=600` : `${baseUrl}?w=600`;
   };
 
+  // --- 💰 PRICE EXTRACTOR (Smart Lookup) ---
+  const extractAllPrices = (act) => {
+      const priceMap = {};
+      
+      // 1. Add Default Price
+      if (act.nextDefaultPriceMoney) {
+          priceMap[act.nextDefaultPriceMoney.currency] = act.nextDefaultPriceMoney.amount;
+      }
+
+      // 2. Scan Rates for other fixed currencies
+      if (act.rates) {
+          act.rates.forEach(rate => {
+              if (rate.pricingCategoryRates) {
+                  rate.pricingCategoryRates.forEach(pcr => {
+                      if (pcr.price) {
+                          // Save formatted: "USD": 140
+                          priceMap[pcr.price.currency] = pcr.price.amount;
+                      }
+                  });
+              }
+          });
+      }
+      return priceMap;
+  };
+
   // --- DATA STRIPPER ---
   const simplifyProduct = (item) => {
       if (!item.activity) return item; 
       
       const act = item.activity;
+      
+      // 🔥 Extract all supported currencies
+      const allPrices = extractAllPrices(act);
+      const defaultCurrency = act.nextDefaultPriceMoney?.currency || 'AED';
+
       return {
           id: act.id,
           title: act.title,
           slug: slugify(act.title),
           optimizedImage: getBestImage(act),
-          price: act.nextDefaultPriceMoney?.amount || "Check Price",
+          price: act.nextDefaultPriceMoney?.amount || 0, // Fallback Amount
+          currency: defaultCurrency,                      // Fallback Currency
+          allPrices: allPrices,                           // 🌍 The "Menu" of Fixed Prices
           durationWeeks: act.durationWeeks,
           durationDays: act.durationDays,
           durationHours: act.durationHours,
@@ -189,21 +221,19 @@ export default async function handler(req, res) {
         // --- 3. FLATTEN & PROCESS DATES (Clean Version) ---
         let calendarEntries = [];
         const cutoffDate = new Date(); 
-        cutoffDate.setDate(cutoffDate.getDate() - 1); // Yesterday
+        cutoffDate.setDate(cutoffDate.getDate() - 1); 
         cutoffDate.setHours(0,0,0,0);
 
         results.forEach(product => {
             if (!product.nextDates) return;
 
             product.nextDates.forEach(dateEntry => {
-                // 🛑 SAFETY FIX: Prevents 500 Error on Bad Dates
                 let rawDate = dateEntry.date;
-                // If no date timestamp, try parsing startTime (only if it has 'T')
                 if (!rawDate && dateEntry.startTime && dateEntry.startTime.includes('T')) {
                      rawDate = dateEntry.startTime.split('T')[0];
                 }
 
-                if (!rawDate) return; // Skip if date is invalid
+                if (!rawDate) return; 
 
                 const startDate = new Date(rawDate);
                 if (startDate < cutoffDate) return;
@@ -215,7 +245,8 @@ export default async function handler(req, res) {
                 if (daysToAdd < 0) daysToAdd = 0; 
                 endDate.setDate(startDate.getDate() + daysToAdd);
 
-                // No Smart Math: Just use the product's base price
+                // Use the product's price/currency info
+                // (Upcoming dates use the base product's currency map)
                 let finalPrice = product.price;
 
                 calendarEntries.push({
@@ -223,7 +254,7 @@ export default async function handler(req, res) {
                     startDate: rawDate,
                     endDate: endDate.toISOString().split('T')[0], 
                     spotsLeft: dateEntry.availabilityCount,
-                    dateSpecificPrice: finalPrice // Standard "From" Price
+                    dateSpecificPrice: finalPrice 
                 });
             });
         });
