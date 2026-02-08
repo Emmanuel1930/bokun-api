@@ -1,211 +1,270 @@
 import crypto from 'crypto';
 
 export default async function handler(req, res) {
-  // --- 1. ENABLE CORS (Standard Setup) ---
+  // --- CORS HEADERS ---
   res.setHeader('Access-Control-Allow-Credentials', true);
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
-  res.setHeader(
-    'Access-Control-Allow-Headers',
-    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
-  );
-
-  if (req.method === 'OPTIONS') {
-    res.status(200).end();
-    return;
-  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
+  
+  // Cache for 60s
+  res.setHeader('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=604800');
+  
+  if (req.method === 'OPTIONS') { res.status(200).end(); return; }
 
   const accessKey = process.env.BOKUN_ACCESS_KEY;
   const secretKey = process.env.BOKUN_SECRET_KEY;
-  const baseUrl = "https://api.bokun.io";
 
   const getHeaders = (method, path) => {
     const now = new Date();
-    const pad = (n) => String(n).padStart(2, '0');
-    const dateStr = `${now.getUTCFullYear()}-${pad(now.getUTCMonth() + 1)}-${pad(now.getUTCDate())} ${pad(now.getUTCHours())}:${pad(now.getUTCMinutes())}:${pad(now.getUTCSeconds())}`;
-    const contentToSign = dateStr + accessKey + method + path;
-    const signature = crypto.createHmac('sha1', secretKey).update(contentToSign).digest('base64');
+    const cleanDateStr = now.toISOString().replace(/\.\d{3}Z$/, '').replace(/T/, ' ') + 'Z';
+    const stringToSign = cleanDateStr + accessKey + method + path;
+    const signature = crypto.createHmac('sha1', secretKey).update(stringToSign).digest('base64');
     return {
-      'X-Bokun-AccessKey': accessKey,
-      'X-Bokun-Date': dateStr,
-      'X-Bokun-Signature': signature,
-      'Accept': 'application/json',
-      'Content-Type': 'application/json'
+      'X-Bokun-AccessKey': accessKey, 'X-Bokun-Date': cleanDateStr, 'X-Bokun-Signature': signature, 'Accept': 'application/json', 'Content-Type': 'application/json'
     };
   };
 
-// --- HELPER: Format Itinerary into HTML ---
-const formatItinerary = (items) => {
-    if (!items || !Array.isArray(items) || items.length === 0) return "<p>No itinerary available.</p>";
-    
-    return items.map(item => {
-        const title = item.title || `Day ${item.day || ''}`;
-        const body = item.body || item.text || item.description || ""; 
-        
-        // This style mimics the 'card' look you liked before
-return `
-<div class="timeline-item">
-    <div class="timeline-marker"></div>
-    <div class="timeline-content">
-        <span class="timeline-day">Day ${item.day || '?'}</span>
-        <h3 class="timeline-title">${title}</h3>
-        <div class="timeline-body">${body}</div>
-    </div>
-</div>`;
-    }).join('');
+  const slugify = (text) => text ? text.toString().toLowerCase().trim()
+    .replace(/['’]/g, '-')
+    .replace(/\s+/g, '-')
+    .replace(/[^\w\-]+/g, '')
+    .replace(/\-\-+/g, '-') : "";
+
+  // --- 🖼️ IMAGE OPTIMIZER ---
+  const getBestImage = (activity) => {
+      let photo = activity.keyPhoto;
+      if (!photo && activity.photos && activity.photos.length > 0) {
+          photo = activity.photos[0] || activity.photos[1] || activity.photos[2];
+      }
+      if (!photo) return 'https://via.placeholder.com/600x400?text=No+Image';
+
+      if (photo.derived) {
+          const large = photo.derived.find(d => d.name === 'large');
+          if (large) return large.cleanUrl;
+          const preview = photo.derived.find(d => d.name === 'preview');
+          if (preview) return preview.cleanUrl;
+      }
+      const baseUrl = photo.cleanUrl || photo.originalUrl;
+      return baseUrl.includes('?') ? `${baseUrl}&w=600` : `${baseUrl}?w=600`;
   };
-  
+
   try {
-    // --- STEP 1: Search for IDs (Using 'items') ---
-    const searchPath = '/activity.json/search';
-    const searchBody = JSON.stringify({
-      "page": 1,
-      "pageSize": 100, 
-      "inLang": "en",
-      "currency": "AED"
+    const isUpcomingMode = req.query.mode === 'upcoming';
+    
+    // 🔥 STEP 1: PARALLEL FETCH (Products + ALL Rates)
+    const listPath = '/product-list.json/list';
+    const currencyPath = '/currency.json/findAll';
+
+    const [listRes, currencyRes] = await Promise.all([
+        fetch(`https://api.bokun.io${listPath}`, { method: 'GET', headers: getHeaders('GET', listPath) }),
+        fetch(`https://api.bokun.io${currencyPath}`, { method: 'GET', headers: getHeaders('GET', currencyPath) })
+    ]);
+
+    if (!listRes.ok) throw new Error("Failed to fetch folder tree");
+    
+    const listData = await listRes.json();
+    const currencyData = await currencyRes.ok ? await currencyRes.json() : [];
+
+    // 🔥 STEP 2: BUILD RATES MAP
+    const ratesMap = {};
+    currencyData.forEach(c => {
+        if (c.code && c.rate) {
+            ratesMap[c.code] = c.rate;
+        }
     });
 
-    const searchResponse = await fetch(baseUrl + searchPath, {
-      method: 'POST',
-      headers: getHeaders('POST', searchPath),
-      body: searchBody
-    });
-
-    if (!searchResponse.ok) throw new Error("Search Failed");
-    const searchData = await searchResponse.json();
-
-    // ⚠️ CRITICAL FIX: Use 'items', not 'results'
-    const productSummaries = searchData.items || []; 
-
-    // --- STEP 2: Fetch FULL Details for each product ---
-    // (This ensures we get the Description, Photos, and Attributes)
-    const detailPromises = productSummaries.map(async (summary) => {
-        const detailPath = `/activity.json/${summary.id}?currency=AED&lang=EN`;
-        const detailRes = await fetch(baseUrl + detailPath, {
-            method: 'GET',
-            headers: getHeaders('GET', detailPath)
-        });
-        if (!detailRes.ok) return null;
-        return detailRes.json();
-    });
-
-    const detailedProducts = (await Promise.all(detailPromises)).filter(p => p !== null);
-
-    // --- STEP 3: Map to Duda Collection Format ---
-    const dudaCollection = detailedProducts.map(tour => {
+    // 🧮 PRECISE CONVERTER (With Rounding to Nearest 10)
+    const convertPrice = (amount, fromCurrency, toCurrency) => {
+        if (!amount || !ratesMap[fromCurrency] || !ratesMap[toCurrency]) return null;
         
-        // Slugify
-        const safeTitle = tour.title || "untitled";
-        const slug = safeTitle.toString().toLowerCase().trim()
-            .replace(/['’]/g, '-')     // 1. Turn apostrophes into dashes
-            .replace(/\s+/g, '-')      // 2. Turn spaces into dashes
-            .replace(/[^\w\-]+/g, '')  // 3. Remove other weird characters
-            .replace(/\-\-+/g, '-');   
+        // 1. Convert to Base (ISK)
+        const valueInBase = amount / ratesMap[fromCurrency];
+        
+        // 2. Convert to Target
+        const converted = valueInBase * ratesMap[toCurrency];
+        
+        // 3. 🔥 ROUND TO NEAREST 10
+        // Example: 2661 -> 266.1 -> 266 -> 2660
+        // Example: 1957 -> 195.7 -> 196 -> 1960
+        return Math.round(converted / 10) * 10; 
+    };
 
-        // Price
-        const price = tour.nextDefaultPriceMoney 
-            ? `${tour.nextDefaultPriceMoney.currency} ${tour.nextDefaultPriceMoney.amount.toFixed(2)}` 
-            : "";
+    // --- FETCH LIST ITEMS ---
+    const fetchProductsForList = async (listId) => {
+        const path = `/product-list.json/${listId}`;
+        const resp = await fetch(`https://api.bokun.io${path}`, { method: 'GET', headers: getHeaders('GET', path) });
+        const data = await resp.json();
+        return data.items || [];
+    };
 
-        // Duration
-        let durationText = "";
-        let totalDays = (tour.durationWeeks || 0) * 7 + (tour.durationDays || 0);
-        if (totalDays > 0) durationText = `${totalDays} days`;
-        else if (tour.durationHours) durationText = `${tour.durationHours} hours`;
+    // --- RECURSIVE HYDRATION ---
+    const hydrateTree = async (nodes, onlyGroupTours = false) => {
+        const promises = nodes.map(async (node) => {
+            if (onlyGroupTours && (node.title.includes("Private") || node.title.includes("School"))) return node; 
 
-        // Booking Text
-        let bookingCutoffText = "";
-        if (tour.bookingCutoffWeeks) bookingCutoffText = `Can be booked no later than ${tour.bookingCutoffWeeks} week(s) before start time`;
-        else if (tour.bookingCutoffDays) bookingCutoffText = `Can be booked no later than ${tour.bookingCutoffDays} day(s) before start time`;
-        else if (tour.bookingCutoffHours) bookingCutoffText = `Can be booked no later than ${tour.bookingCutoffHours} hour(s) before start time`;
+            if (node.children && node.children.length > 0) {
+                node.children = await hydrateTree(node.children, onlyGroupTours);
+            } 
+            else if (node.size > 0 && (!node.children || node.children.length === 0)) {
+                const realItems = await fetchProductsForList(node.id);
+                const processedChildren = realItems.map((item) => {
+                    if (item.activity) {
+                        const act = item.activity;
+                        const basePrice = act.nextDefaultPriceMoney?.amount || 0;
+                        const baseCurrency = act.nextDefaultPriceMoney?.currency || 'AED';
 
-        // Pickup Text
-        const pickupMinutes = tour.pickupMinutesBefore || 0;
-        const pickupText = `<strong>Note:</strong> Pick-up starts ${pickupMinutes} minute(s) before departure.`;
+                        // 🔥 GENERATE ALL PRICES (With Rounding)
+                        const allPrices = { [baseCurrency]: basePrice }; // Keep base price exact
+                        
+                        Object.keys(ratesMap).forEach(targetCode => {
+                            if (targetCode !== baseCurrency) {
+                                const newPrice = convertPrice(basePrice, baseCurrency, targetCode);
+                                if (newPrice !== null) {
+                                    allPrices[targetCode] = newPrice;
+                                }
+                            }
+                        });
 
-        // Categories
-        const isPrivate = safeTitle.toLowerCase().includes('private') || (tour.attributes && tour.attributes.includes('Private'));
-        const subListName = isPrivate ? "Private Tours" : "Group Tours";
-
-        // Location
-        const startPoint = (tour.startPoints && tour.startPoints.length > 0) ? tour.startPoints[0] : {};
-
-        return {
-            "page_item_url": slug,
-            "data": {
-                "id": tour.id.toString(),
-                "productCode": tour.externalId || tour.id.toString(),
-                "title": safeTitle,
-                "description": tour.description || "",
-                "excerpt": tour.excerpt || "",
-                "supplier": tour.vendor ? tour.vendor.title : "Arabian Wanderers",
-                "activityType": tour.activityType || "Multi day tour",
-                "meetingType": tour.meetingType || "Meet on location",
-                "defaultPrice": price,
-                
-                // HTML Fields
-                "included": tour.included || "",
-                "excluded": tour.excluded || "",
-                "requirements": tour.requirements || "",
-                "knowBeforeYouGo": tour.attention || tour.knowBeforeYouGo || "",
-                "itinerary": formatItinerary(tour.itinerary || tour.agendaItems),
-                
-                "inclusions": [],
-                "exclusions": [],
-                "knowBeforeYouGoItems": [], 
-
-                // Metadata
-                "durationText": durationText,
-                "minAge": tour.minAge ? `Minimum age: ${tour.minAge}` : "",
-                "difficultyLevel": tour.difficultyLevel || "",
-                "bookingCutoffText": bookingCutoffText,
-                "pickupBeforeMinutesText": pickupText,
-
-                // Arrays
-                "activityCategories": tour.activityCategories ? tour.activityCategories.map(c => ({ "value": c })) : [],
-                "activityAttributes": tour.attributes ? tour.attributes.map(a => ({ "value": a })) : [],
-                "guidedLanguage": tour.guidedLanguages ? tour.guidedLanguages.map(l => ({ "value": l })) : [{"value": "English"}],
-                "guidedLanguageHeadphones": [],
-                "guidedLanguageReadingMaterial": [],
-
-                // Images
-                "keyPhoto": tour.keyPhoto ? tour.keyPhoto.originalUrl : "",
-                "keyPhotoMedium": tour.keyPhoto ? tour.keyPhoto.originalUrl.replace('original', 'medium') : "",
-                "keyPhotoSmall": tour.keyPhoto ? tour.keyPhoto.originalUrl.replace('original', 'small') : "",
-                "keyPhotoAltText": "",
-                "keyVideo": (tour.videos && tour.videos.length > 0) ? tour.videos[0].sourceUrl : (tour.keyVideo ? tour.keyVideo.url : ""),
-                "otherPhotos": tour.photos ? tour.photos.map(p => ({
-                    "originalUrl": p.originalUrl,
-                    "alternateText": p.alternateText || null,
-                    "description": p.description || null
-                })) : [],
-
-                // Legacy Lists
-                "subLists": `|${subListName}|`,
-                "productLists": [
-                    { "id": 93520, "title": "Active Tours", "parent_id": null, "level": 0 },
-                    { "id": isPrivate ? 99991 : 93642, "title": subListName, "parent_id": 93520, "level": 1 }
-                ],
-                "tripadvisorRating": "",
-                "tripadvisorNumReviews": "",
-
-                // Location Object
-                "location": {
-                    "geo": {
-                        "longitude": startPoint.longitude ? startPoint.longitude.toString() : "",
-                        "latitude": startPoint.latitude ? startPoint.latitude.toString() : ""
-                    },
-                    "address": { "streetAddress": startPoint.address || "" },
-                    "address_geolocation": startPoint.address || ""
-                }
+                        return {
+                            id: act.id,
+                            title: act.title,
+                            slug: slugify(act.title),
+                            optimizedImage: getBestImage(act),
+                            price: basePrice,
+                            currency: baseCurrency,
+                            allPrices: allPrices, // 🌍 Contains rounded prices (e.g., 2660, 1960)
+                            durationWeeks: act.durationWeeks,
+                            durationDays: act.durationDays,
+                            durationHours: act.durationHours,
+                            location: act.googlePlace?.name || act.locationCode?.location
+                        };
+                    }
+                    return item; 
+                });
+                node.children = processedChildren;
             }
+            return node;
+        });
+        return Promise.all(promises);
+    };
+
+    const hydratedData = await hydrateTree(listData, isUpcomingMode);
+    
+    // --- FAST EXIT: STANDARD MODE ---
+    if (!isUpcomingMode) return res.status(200).json(hydratedData);
+
+    // --- UPCOMING MODE ONLY ---
+    if (isUpcomingMode) {
+        let uniqueProducts = new Map(); 
+        
+        const findGroupFolder = (nodes) => {
+            for (const node of nodes) {
+                if (node.title === "Active Tours") return findGroupFolder(node.children);
+                if (node.title === "Group Tours") return node;
+            }
+            return null;
         };
-    });
+        const groupFolder = findGroupFolder(hydratedData);
+        
+        const collect = (nodes) => {
+            nodes.forEach(node => {
+                if (node.children && node.children.length > 0) collect(node.children);
+                else if (node.id && node.title) {
+                    if (!uniqueProducts.has(node.id)) uniqueProducts.set(node.id, node);
+                }
+            });
+        };
+        
+        if (groupFolder) collect(groupFolder.children || []);
+        else collect(hydratedData); 
 
-    res.status(200).json(dudaCollection);
+        // DATE RANGE
+        const today = new Date();
+        const futureDate = new Date();
+        futureDate.setMonth(today.getMonth() + 6);
+        
+        const yesterday = new Date(today);
+        yesterday.setDate(today.getDate() - 1);
+        const startStr = yesterday.toISOString().split('T')[0];
+        const endStr = futureDate.toISOString().split('T')[0];
+        const productsToCheck = Array.from(uniqueProducts.values());
 
-  } catch (error) {
-    console.error("Collection Error:", error);
-    res.status(500).json({ error: error.message });
-  }
+        // 🚀 OPTIMIZED FETCH
+        const results = [];
+        
+        while (productsToCheck.length > 0) {
+            const chunk = productsToCheck.splice(0, 8); 
+            
+            const chunkPromises = chunk.map(async (product) => {
+                if (!product.id) return null;
+                const availPath = `/activity.json/${product.id}/availabilities?start=${startStr}&end=${endStr}&includeSoldOut=false`;
+                
+                const fetchWithRetry = async (retries = 2) => {
+                    try {
+                        await new Promise(r => setTimeout(r, 10)); 
+                        const res = await fetch(`https://api.bokun.io${availPath}`, { method: 'GET', headers: getHeaders('GET', availPath) });
+                        if (!res.ok) {
+                            if (retries > 0) {
+                                await new Promise(r => setTimeout(r, 200));
+                                return fetchWithRetry(retries - 1); 
+                            }
+                            return null;
+                        }
+                        return res.json();
+                    } catch (e) {
+                        if (retries > 0) return fetchWithRetry(retries - 1);
+                        return null;
+                    }
+                };
+
+                const dates = await fetchWithRetry();
+                if (dates?.length > 0) return { ...product, nextDates: dates };
+                return null;
+            });
+            
+            const chunkResults = await Promise.all(chunkPromises);
+            results.push(...chunkResults.filter(p => p !== null));
+        }
+       
+        // --- 3. FLATTEN & PROCESS DATES ---
+        let calendarEntries = [];
+        const cutoffDate = new Date(); 
+        cutoffDate.setDate(cutoffDate.getDate() - 1); 
+        cutoffDate.setHours(0,0,0,0);
+
+        results.forEach(product => {
+            if (!product.nextDates) return;
+
+            product.nextDates.forEach(dateEntry => {
+                let rawDate = dateEntry.date;
+                if (!rawDate && dateEntry.startTime && dateEntry.startTime.includes('T')) {
+                     rawDate = dateEntry.startTime.split('T')[0];
+                }
+                if (!rawDate) return; 
+
+                const startDate = new Date(rawDate);
+                if (startDate < cutoffDate) return;
+
+                let endDate = new Date(startDate);
+                let daysToAdd = 0;
+                if (product.durationWeeks) daysToAdd = (product.durationWeeks * 7) - 1;
+                else if (product.durationDays) daysToAdd = product.durationDays - 1;
+                if (daysToAdd < 0) daysToAdd = 0; 
+                endDate.setDate(startDate.getDate() + daysToAdd);
+
+                calendarEntries.push({
+                    ...product, 
+                    startDate: rawDate,
+                    endDate: endDate.toISOString().split('T')[0], 
+                    spotsLeft: dateEntry.availabilityCount,
+                    dateSpecificPrice: product.price 
+                });
+            });
+        });
+
+        calendarEntries.sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
+        return res.status(200).json(calendarEntries);
+    }
+  } catch (error) { res.status(500).json({ error: error.message }); }
 }
