@@ -7,7 +7,7 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
   
-  // Cache for 60s
+  // Cache for 60s (Stale while revalidate for speed)
   res.setHeader('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=604800');
   
   if (req.method === 'OPTIONS') { res.status(200).end(); return; }
@@ -31,7 +31,6 @@ export default async function handler(req, res) {
     .replace(/[^\w\-]+/g, '')
     .replace(/\-\-+/g, '-') : "";
 
-  // --- 🖼️ IMAGE OPTIMIZER ---
   const getBestImage = (activity) => {
       let photo = activity.keyPhoto;
       if (!photo && activity.photos && activity.photos.length > 0) {
@@ -67,7 +66,7 @@ export default async function handler(req, res) {
     const currencyData = await currencyRes.ok ? await currencyRes.json() : [];
 
     // 🔥 STEP 2: BUILD RATES MAP
-    // We Map ALL currencies from the API response
+    // Map ALL currencies from the API response (AED, USD, ZAR, CHF...)
     const ratesMap = {};
     currencyData.forEach(c => {
         if (c.code && c.rate) {
@@ -75,20 +74,18 @@ export default async function handler(req, res) {
         }
     });
 
-    // 🧮 PRECISE CONVERTER (No Early Rounding)
+    // 🧮 PRECISE CONVERTER (With "Nearest 10" Rounding)
     const convertPrice = (amount, fromCurrency, toCurrency) => {
         if (!amount || !ratesMap[fromCurrency] || !ratesMap[toCurrency]) return null;
         
         // 1. Convert to Base (ISK)
-        // Formula: Amount / Rate = Value in ISK
         const valueInBase = amount / ratesMap[fromCurrency];
         
         // 2. Convert to Target
-        // Formula: Value in ISK * Target Rate
         const converted = valueInBase * ratesMap[toCurrency];
         
-        // 3. Final Rounding (Standard Math.round to match most displays)
-        return Math.round(converted); 
+        // 3. 🔥 ROUND TO NEAREST 10 (Fixes 2661 -> 2660)
+        return Math.round(converted / 10) * 10; 
     };
 
     // --- FETCH LIST ITEMS ---
@@ -115,11 +112,10 @@ export default async function handler(req, res) {
                         const basePrice = act.nextDefaultPriceMoney?.amount || 0;
                         const baseCurrency = act.nextDefaultPriceMoney?.currency || 'AED';
 
-                        // 🔥 GENERATE ALL PRICES (The Full List)
-                        // We start with the base price
-                        const allPrices = { [baseCurrency]: basePrice };
+                        // 🔥 GENERATE ALL PRICES (The Full "Big List")
+                        const allPrices = { [baseCurrency]: basePrice }; 
                         
-                        // Loop through EVERY currency found in Bokun's system
+                        // Loop through EVERY currency found in Bokun
                         Object.keys(ratesMap).forEach(targetCode => {
                             if (targetCode !== baseCurrency) {
                                 const newPrice = convertPrice(basePrice, baseCurrency, targetCode);
@@ -136,7 +132,7 @@ export default async function handler(req, res) {
                             optimizedImage: getBestImage(act),
                             price: basePrice,
                             currency: baseCurrency,
-                            allPrices: allPrices, // 🌍 Contains exact math for ALL currencies
+                            allPrices: allPrices, // 🌍 Contains {AED: 9500, USD: 2660, ...}
                             durationWeeks: act.durationWeeks,
                             durationDays: act.durationDays,
                             durationHours: act.durationHours,
@@ -160,7 +156,6 @@ export default async function handler(req, res) {
     // --- UPCOMING MODE ONLY ---
     if (isUpcomingMode) {
         let uniqueProducts = new Map(); 
-        
         const findGroupFolder = (nodes) => {
             for (const node of nodes) {
                 if (node.title === "Active Tours") return findGroupFolder(node.children);
@@ -178,27 +173,22 @@ export default async function handler(req, res) {
                 }
             });
         };
-        
         if (groupFolder) collect(groupFolder.children || []);
         else collect(hydratedData); 
 
-        // DATE RANGE
         const today = new Date();
         const futureDate = new Date();
         futureDate.setMonth(today.getMonth() + 6);
-        
         const yesterday = new Date(today);
         yesterday.setDate(today.getDate() - 1);
         const startStr = yesterday.toISOString().split('T')[0];
         const endStr = futureDate.toISOString().split('T')[0];
         const productsToCheck = Array.from(uniqueProducts.values());
 
-        // 🚀 OPTIMIZED FETCH
         const results = [];
         
         while (productsToCheck.length > 0) {
             const chunk = productsToCheck.splice(0, 8); 
-            
             const chunkPromises = chunk.map(async (product) => {
                 if (!product.id) return null;
                 const availPath = `/activity.json/${product.id}/availabilities?start=${startStr}&end=${endStr}&includeSoldOut=false`;
@@ -208,29 +198,21 @@ export default async function handler(req, res) {
                         await new Promise(r => setTimeout(r, 10)); 
                         const res = await fetch(`https://api.bokun.io${availPath}`, { method: 'GET', headers: getHeaders('GET', availPath) });
                         if (!res.ok) {
-                            if (retries > 0) {
-                                await new Promise(r => setTimeout(r, 200));
-                                return fetchWithRetry(retries - 1); 
-                            }
+                            if (retries > 0) { await new Promise(r => setTimeout(r, 200)); return fetchWithRetry(retries - 1); }
                             return null;
                         }
                         return res.json();
-                    } catch (e) {
-                        if (retries > 0) return fetchWithRetry(retries - 1);
-                        return null;
-                    }
+                    } catch (e) { if (retries > 0) return fetchWithRetry(retries - 1); return null; }
                 };
 
                 const dates = await fetchWithRetry();
                 if (dates?.length > 0) return { ...product, nextDates: dates };
                 return null;
             });
-            
             const chunkResults = await Promise.all(chunkPromises);
             results.push(...chunkResults.filter(p => p !== null));
         }
        
-        // --- 3. FLATTEN & PROCESS DATES ---
         let calendarEntries = [];
         const cutoffDate = new Date(); 
         cutoffDate.setDate(cutoffDate.getDate() - 1); 
@@ -238,14 +220,10 @@ export default async function handler(req, res) {
 
         results.forEach(product => {
             if (!product.nextDates) return;
-
             product.nextDates.forEach(dateEntry => {
                 let rawDate = dateEntry.date;
-                if (!rawDate && dateEntry.startTime && dateEntry.startTime.includes('T')) {
-                     rawDate = dateEntry.startTime.split('T')[0];
-                }
+                if (!rawDate && dateEntry.startTime && dateEntry.startTime.includes('T')) rawDate = dateEntry.startTime.split('T')[0];
                 if (!rawDate) return; 
-
                 const startDate = new Date(rawDate);
                 if (startDate < cutoffDate) return;
 
