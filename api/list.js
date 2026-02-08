@@ -7,7 +7,7 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
   
-  // Cache for 60s (Stale while revalidate for speed)
+  // Cache for 60s
   res.setHeader('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=604800');
   
   if (req.method === 'OPTIONS') { res.status(200).end(); return; }
@@ -51,49 +51,77 @@ export default async function handler(req, res) {
   try {
     const isUpcomingMode = req.query.mode === 'upcoming';
     
-    // 🔥 STEP 1: PARALLEL FETCH (Products + ALL Rates)
+    // 1. FETCH FOLDER STRUCTURE
     const listPath = '/product-list.json/list';
-    const currencyPath = '/currency.json/findAll';
-
-    const [listRes, currencyRes] = await Promise.all([
-        fetch(`https://api.bokun.io${listPath}`, { method: 'GET', headers: getHeaders('GET', listPath) }),
-        fetch(`https://api.bokun.io${currencyPath}`, { method: 'GET', headers: getHeaders('GET', currencyPath) })
-    ]);
-
+    const listRes = await fetch(`https://api.bokun.io${listPath}`, { method: 'GET', headers: getHeaders('GET', listPath) });
     if (!listRes.ok) throw new Error("Failed to fetch folder tree");
-    
     const listData = await listRes.json();
-    const currencyData = await currencyRes.ok ? await currencyRes.json() : [];
+    
+    // --- 🔥 THE HEAVY LIFTER: FETCH ALL 55 CURRENCIES ---
+    const fetchProductsMultiCurrency = async (listId) => {
+        // 🌍 The Full List (55 Countries)
+        const currencies = [
+            'AED', 'CHF', 'FJD', 'MXN', 'CLP', 'ZAR', 'TND', 'VND', 'AUD', 'ILS', 
+            'IDR', 'KYD', 'TRY', 'HKD', 'TWD', 'EUR', 'DKK', 'CAD', 'MYR', 'BGN', 
+            'MUR', 'NOK', 'GEL', 'RON', 'UYU', 'MAD', 'CRC', 'CZK', 'OMR', 'SEK', 
+            'BHD', 'ARS', 'QAR', 'SAR', 'INR', 'THB', 'XPF', 'CNY', 'KRW', 'JPY', 
+            'PLN', 'GBP', 'HUF', 'KWD', 'PHP', 'RUB', 'ISK', 'JMD', 'COP', 'USD', 
+            'SGD', 'VUV', 'PEN', 'NZD', 'BRL'
+        ];
 
-    // 🔥 STEP 2: BUILD RATES MAP
-    // Map ALL currencies from the API response (AED, USD, ZAR, CHF...)
-    const ratesMap = {};
-    currencyData.forEach(c => {
-        if (c.code && c.rate) {
-            ratesMap[c.code] = c.rate;
-        }
-    });
-
-    // 🧮 PRECISE CONVERTER (With "Nearest 10" Rounding)
-    const convertPrice = (amount, fromCurrency, toCurrency) => {
-        if (!amount || !ratesMap[fromCurrency] || !ratesMap[toCurrency]) return null;
-        
-        // 1. Convert to Base (ISK)
-        const valueInBase = amount / ratesMap[fromCurrency];
-        
-        // 2. Convert to Target
-        const converted = valueInBase * ratesMap[toCurrency];
-        
-        // 3. 🔥 ROUND TO NEAREST 10 (Fixes 2661 -> 2660)
-        return Math.round(converted / 10) * 10; 
-    };
-
-    // --- FETCH LIST ITEMS ---
-    const fetchProductsForList = async (listId) => {
         const path = `/product-list.json/${listId}`;
-        const resp = await fetch(`https://api.bokun.io${path}`, { method: 'GET', headers: getHeaders('GET', path) });
-        const data = await resp.json();
-        return data.items || [];
+        
+        // 🚀 BATCH FETCHING (Process in chunks of 10 to avoid instant blocking)
+        const results = [];
+        const chunkSize = 10;
+        
+        for (let i = 0; i < currencies.length; i += chunkSize) {
+            const chunk = currencies.slice(i, i + chunkSize);
+            
+            const chunkPromises = chunk.map(curr => {
+                const currPath = `${path}?currency=${curr}`;
+                return fetch(`https://api.bokun.io${currPath}`, { 
+                    method: 'GET', 
+                    headers: getHeaders('GET', currPath) 
+                })
+                .then(r => r.ok ? r.json() : { items: [] }) // Handle errors gracefully
+                .then(data => ({ code: curr, items: data.items || [] }))
+                .catch(err => ({ code: curr, items: [] })); // Prevent crash on one fail
+            });
+
+            // Wait for this chunk to finish before starting the next (Safety)
+            const chunkResults = await Promise.all(chunkPromises);
+            results.push(...chunkResults);
+        }
+        
+        // We use AED (Index 0) as the "Main" list to build the structure
+        const mainList = results.find(r => r.code === 'AED')?.items || results[0].items; 
+        
+        // Merge the prices into the main items
+        return mainList.map(item => {
+            if (!item.activity) return item;
+            
+            const act = item.activity;
+            const allPrices = {};
+
+            // Loop through results and grab the price for this product ID
+            results.forEach(res => {
+                const match = res.items.find(i => i.activity && i.activity.id === act.id);
+                if (match && match.activity.nextDefaultPriceMoney) {
+                    // 🎯 This is the EXACT Bókun Price (No Math)
+                    allPrices[res.code] = match.activity.nextDefaultPriceMoney.amount;
+                }
+            });
+
+            // Return the enriched item
+            return {
+                ...item,
+                activity: {
+                    ...act,
+                    allPrices: allPrices // 🌍 { AED: 9500, USD: 2660, GBP: 1960... }
+                }
+            };
+        });
     };
 
     // --- RECURSIVE HYDRATION ---
@@ -105,34 +133,21 @@ export default async function handler(req, res) {
                 node.children = await hydrateTree(node.children, onlyGroupTours);
             } 
             else if (node.size > 0 && (!node.children || node.children.length === 0)) {
-                const realItems = await fetchProductsForList(node.id);
+                
+                // 🔥 CALL THE HEAVY LIFTER
+                const realItems = await fetchProductsMultiCurrency(node.id);
+                
                 const processedChildren = realItems.map((item) => {
                     if (item.activity) {
                         const act = item.activity;
-                        const basePrice = act.nextDefaultPriceMoney?.amount || 0;
-                        const baseCurrency = act.nextDefaultPriceMoney?.currency || 'AED';
-
-                        // 🔥 GENERATE ALL PRICES (The Full "Big List")
-                        const allPrices = { [baseCurrency]: basePrice }; 
-                        
-                        // Loop through EVERY currency found in Bokun
-                        Object.keys(ratesMap).forEach(targetCode => {
-                            if (targetCode !== baseCurrency) {
-                                const newPrice = convertPrice(basePrice, baseCurrency, targetCode);
-                                if (newPrice !== null) {
-                                    allPrices[targetCode] = newPrice;
-                                }
-                            }
-                        });
-
                         return {
                             id: act.id,
                             title: act.title,
                             slug: slugify(act.title),
                             optimizedImage: getBestImage(act),
-                            price: basePrice,
-                            currency: baseCurrency,
-                            allPrices: allPrices, // 🌍 Contains {AED: 9500, USD: 2660, ...}
+                            price: act.nextDefaultPriceMoney?.amount || 0,
+                            currency: act.nextDefaultPriceMoney?.currency || 'AED',
+                            allPrices: act.allPrices, // ✅ Contains REAL API PRICES
                             durationWeeks: act.durationWeeks,
                             durationDays: act.durationDays,
                             durationHours: act.durationHours,
@@ -164,7 +179,6 @@ export default async function handler(req, res) {
             return null;
         };
         const groupFolder = findGroupFolder(hydratedData);
-        
         const collect = (nodes) => {
             nodes.forEach(node => {
                 if (node.children && node.children.length > 0) collect(node.children);
@@ -176,6 +190,7 @@ export default async function handler(req, res) {
         if (groupFolder) collect(groupFolder.children || []);
         else collect(hydratedData); 
 
+        // DATE RANGE
         const today = new Date();
         const futureDate = new Date();
         futureDate.setMonth(today.getMonth() + 6);
