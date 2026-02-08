@@ -31,7 +31,6 @@ export default async function handler(req, res) {
     .replace(/[^\w\-]+/g, '')
     .replace(/\-\-+/g, '-') : "";
 
-  // --- 🖼️ IMAGE OPTIMIZER ---
   const getBestImage = (activity) => {
       let photo = activity.keyPhoto;
       if (!photo && activity.photos && activity.photos.length > 0) {
@@ -52,50 +51,77 @@ export default async function handler(req, res) {
   try {
     const isUpcomingMode = req.query.mode === 'upcoming';
     
-    // 🔥 STEP 1: PARALLEL FETCH (Products + ALL Rates)
+    // 1. FETCH FOLDER STRUCTURE
     const listPath = '/product-list.json/list';
-    const currencyPath = '/currency.json/findAll';
-
-    const [listRes, currencyRes] = await Promise.all([
-        fetch(`https://api.bokun.io${listPath}`, { method: 'GET', headers: getHeaders('GET', listPath) }),
-        fetch(`https://api.bokun.io${currencyPath}`, { method: 'GET', headers: getHeaders('GET', currencyPath) })
-    ]);
-
+    const listRes = await fetch(`https://api.bokun.io${listPath}`, { method: 'GET', headers: getHeaders('GET', listPath) });
     if (!listRes.ok) throw new Error("Failed to fetch folder tree");
-    
     const listData = await listRes.json();
-    const currencyData = await currencyRes.ok ? await currencyRes.json() : [];
+    
+    // --- 🔥 THE HEAVY LIFTER: FETCH ALL 55 CURRENCIES ---
+    const fetchProductsMultiCurrency = async (listId) => {
+        // 🌍 The Full List (55 Countries)
+        const currencies = [
+            'AED', 'CHF', 'FJD', 'MXN', 'CLP', 'ZAR', 'TND', 'VND', 'AUD', 'ILS', 
+            'IDR', 'KYD', 'TRY', 'HKD', 'TWD', 'EUR', 'DKK', 'CAD', 'MYR', 'BGN', 
+            'MUR', 'NOK', 'GEL', 'RON', 'UYU', 'MAD', 'CRC', 'CZK', 'OMR', 'SEK', 
+            'BHD', 'ARS', 'QAR', 'SAR', 'INR', 'THB', 'XPF', 'CNY', 'KRW', 'JPY', 
+            'PLN', 'GBP', 'HUF', 'KWD', 'PHP', 'RUB', 'ISK', 'JMD', 'COP', 'USD', 
+            'SGD', 'VUV', 'PEN', 'NZD', 'BRL'
+        ];
 
-    // 🔥 STEP 2: BUILD RATES MAP
-    const ratesMap = {};
-    currencyData.forEach(c => {
-        if (c.code && c.rate) {
-            ratesMap[c.code] = c.rate;
-        }
-    });
-
-    // 🧮 PRECISE CONVERTER (With Rounding to Nearest 10)
-    const convertPrice = (amount, fromCurrency, toCurrency) => {
-        if (!amount || !ratesMap[fromCurrency] || !ratesMap[toCurrency]) return null;
-        
-        // 1. Convert to Base (ISK)
-        const valueInBase = amount / ratesMap[fromCurrency];
-        
-        // 2. Convert to Target
-        const converted = valueInBase * ratesMap[toCurrency];
-        
-        // 3. 🔥 ROUND TO NEAREST 10
-        // Example: 2661 -> 266.1 -> 266 -> 2660
-        // Example: 1957 -> 195.7 -> 196 -> 1960
-        return Math.round(converted / 10) * 10; 
-    };
-
-    // --- FETCH LIST ITEMS ---
-    const fetchProductsForList = async (listId) => {
         const path = `/product-list.json/${listId}`;
-        const resp = await fetch(`https://api.bokun.io${path}`, { method: 'GET', headers: getHeaders('GET', path) });
-        const data = await resp.json();
-        return data.items || [];
+        
+        // 🚀 BATCH FETCHING (Process in chunks of 10 to avoid instant blocking)
+        const results = [];
+        const chunkSize = 10;
+        
+        for (let i = 0; i < currencies.length; i += chunkSize) {
+            const chunk = currencies.slice(i, i + chunkSize);
+            
+            const chunkPromises = chunk.map(curr => {
+                const currPath = `${path}?currency=${curr}`;
+                return fetch(`https://api.bokun.io${currPath}`, { 
+                    method: 'GET', 
+                    headers: getHeaders('GET', currPath) 
+                })
+                .then(r => r.ok ? r.json() : { items: [] }) // Handle errors gracefully
+                .then(data => ({ code: curr, items: data.items || [] }))
+                .catch(err => ({ code: curr, items: [] })); // Prevent crash on one fail
+            });
+
+            // Wait for this chunk to finish before starting the next (Safety)
+            const chunkResults = await Promise.all(chunkPromises);
+            results.push(...chunkResults);
+        }
+        
+        // We use AED (Index 0) as the "Main" list to build the structure
+        const mainList = results.find(r => r.code === 'AED')?.items || results[0].items; 
+        
+        // Merge the prices into the main items
+        return mainList.map(item => {
+            if (!item.activity) return item;
+            
+            const act = item.activity;
+            const allPrices = {};
+
+            // Loop through results and grab the price for this product ID
+            results.forEach(res => {
+                const match = res.items.find(i => i.activity && i.activity.id === act.id);
+                if (match && match.activity.nextDefaultPriceMoney) {
+                    // 🎯 This is the EXACT Bókun Price (No Math)
+                    allPrices[res.code] = match.activity.nextDefaultPriceMoney.amount;
+                }
+            });
+
+            // Return the enriched item
+            return {
+                ...item,
+                activity: {
+                    ...act,
+                    allPrices: allPrices // 🌍 { AED: 9500, USD: 2660, GBP: 1960... }
+                }
+            };
+        });
     };
 
     // --- RECURSIVE HYDRATION ---
@@ -107,33 +133,21 @@ export default async function handler(req, res) {
                 node.children = await hydrateTree(node.children, onlyGroupTours);
             } 
             else if (node.size > 0 && (!node.children || node.children.length === 0)) {
-                const realItems = await fetchProductsForList(node.id);
+                
+                // 🔥 CALL THE HEAVY LIFTER
+                const realItems = await fetchProductsMultiCurrency(node.id);
+                
                 const processedChildren = realItems.map((item) => {
                     if (item.activity) {
                         const act = item.activity;
-                        const basePrice = act.nextDefaultPriceMoney?.amount || 0;
-                        const baseCurrency = act.nextDefaultPriceMoney?.currency || 'AED';
-
-                        // 🔥 GENERATE ALL PRICES (With Rounding)
-                        const allPrices = { [baseCurrency]: basePrice }; // Keep base price exact
-                        
-                        Object.keys(ratesMap).forEach(targetCode => {
-                            if (targetCode !== baseCurrency) {
-                                const newPrice = convertPrice(basePrice, baseCurrency, targetCode);
-                                if (newPrice !== null) {
-                                    allPrices[targetCode] = newPrice;
-                                }
-                            }
-                        });
-
                         return {
                             id: act.id,
                             title: act.title,
                             slug: slugify(act.title),
                             optimizedImage: getBestImage(act),
-                            price: basePrice,
-                            currency: baseCurrency,
-                            allPrices: allPrices, // 🌍 Contains rounded prices (e.g., 2660, 1960)
+                            price: act.nextDefaultPriceMoney?.amount || 0,
+                            currency: act.nextDefaultPriceMoney?.currency || 'AED',
+                            allPrices: act.allPrices, // ✅ Contains REAL API PRICES
                             durationWeeks: act.durationWeeks,
                             durationDays: act.durationDays,
                             durationHours: act.durationHours,
@@ -157,7 +171,6 @@ export default async function handler(req, res) {
     // --- UPCOMING MODE ONLY ---
     if (isUpcomingMode) {
         let uniqueProducts = new Map(); 
-        
         const findGroupFolder = (nodes) => {
             for (const node of nodes) {
                 if (node.title === "Active Tours") return findGroupFolder(node.children);
@@ -166,7 +179,6 @@ export default async function handler(req, res) {
             return null;
         };
         const groupFolder = findGroupFolder(hydratedData);
-        
         const collect = (nodes) => {
             nodes.forEach(node => {
                 if (node.children && node.children.length > 0) collect(node.children);
@@ -175,7 +187,6 @@ export default async function handler(req, res) {
                 }
             });
         };
-        
         if (groupFolder) collect(groupFolder.children || []);
         else collect(hydratedData); 
 
@@ -183,19 +194,16 @@ export default async function handler(req, res) {
         const today = new Date();
         const futureDate = new Date();
         futureDate.setMonth(today.getMonth() + 6);
-        
         const yesterday = new Date(today);
         yesterday.setDate(today.getDate() - 1);
         const startStr = yesterday.toISOString().split('T')[0];
         const endStr = futureDate.toISOString().split('T')[0];
         const productsToCheck = Array.from(uniqueProducts.values());
 
-        // 🚀 OPTIMIZED FETCH
         const results = [];
         
         while (productsToCheck.length > 0) {
             const chunk = productsToCheck.splice(0, 8); 
-            
             const chunkPromises = chunk.map(async (product) => {
                 if (!product.id) return null;
                 const availPath = `/activity.json/${product.id}/availabilities?start=${startStr}&end=${endStr}&includeSoldOut=false`;
@@ -205,29 +213,21 @@ export default async function handler(req, res) {
                         await new Promise(r => setTimeout(r, 10)); 
                         const res = await fetch(`https://api.bokun.io${availPath}`, { method: 'GET', headers: getHeaders('GET', availPath) });
                         if (!res.ok) {
-                            if (retries > 0) {
-                                await new Promise(r => setTimeout(r, 200));
-                                return fetchWithRetry(retries - 1); 
-                            }
+                            if (retries > 0) { await new Promise(r => setTimeout(r, 200)); return fetchWithRetry(retries - 1); }
                             return null;
                         }
                         return res.json();
-                    } catch (e) {
-                        if (retries > 0) return fetchWithRetry(retries - 1);
-                        return null;
-                    }
+                    } catch (e) { if (retries > 0) return fetchWithRetry(retries - 1); return null; }
                 };
 
                 const dates = await fetchWithRetry();
                 if (dates?.length > 0) return { ...product, nextDates: dates };
                 return null;
             });
-            
             const chunkResults = await Promise.all(chunkPromises);
             results.push(...chunkResults.filter(p => p !== null));
         }
        
-        // --- 3. FLATTEN & PROCESS DATES ---
         let calendarEntries = [];
         const cutoffDate = new Date(); 
         cutoffDate.setDate(cutoffDate.getDate() - 1); 
@@ -235,14 +235,10 @@ export default async function handler(req, res) {
 
         results.forEach(product => {
             if (!product.nextDates) return;
-
             product.nextDates.forEach(dateEntry => {
                 let rawDate = dateEntry.date;
-                if (!rawDate && dateEntry.startTime && dateEntry.startTime.includes('T')) {
-                     rawDate = dateEntry.startTime.split('T')[0];
-                }
+                if (!rawDate && dateEntry.startTime && dateEntry.startTime.includes('T')) rawDate = dateEntry.startTime.split('T')[0];
                 if (!rawDate) return; 
-
                 const startDate = new Date(rawDate);
                 if (startDate < cutoffDate) return;
 
