@@ -7,7 +7,7 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
   
-  // SPEED BOOST: Cache for 60s
+  // CACHE: 60s
   res.setHeader('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=604800');
   
   if (req.method === 'OPTIONS') { res.status(200).end(); return; }
@@ -50,74 +50,27 @@ export default async function handler(req, res) {
       return baseUrl.includes('?') ? `${baseUrl}&w=600` : `${baseUrl}?w=600`;
   };
 
-  // --- 💰 PRICE EXTRACTOR (Smart Lookup) ---
-  const extractAllPrices = (act) => {
-      const priceMap = {};
-      
-      // 1. Add Default Price
-      if (act.nextDefaultPriceMoney) {
-          priceMap[act.nextDefaultPriceMoney.currency] = act.nextDefaultPriceMoney.amount;
-      }
-
-      // 2. Scan Rates for other fixed currencies
-      if (act.rates) {
-          act.rates.forEach(rate => {
-              if (rate.pricingCategoryRates) {
-                  rate.pricingCategoryRates.forEach(pcr => {
-                      if (pcr.price) {
-                          // Save formatted: "USD": 140
-                          priceMap[pcr.price.currency] = pcr.price.amount;
-                      }
-                  });
-              }
-          });
-      }
-      return priceMap;
-  };
-
-  // --- DATA STRIPPER ---
-  const simplifyProduct = (item) => {
-      if (!item.activity) return item; 
-      
-      const act = item.activity;
-      
-      // 🔥 Extract all supported currencies
-      const allPrices = extractAllPrices(act);
-      const defaultCurrency = act.nextDefaultPriceMoney?.currency || 'AED';
-
-      return {
-          id: act.id,
-          title: act.title,
-          slug: slugify(act.title),
-          optimizedImage: getBestImage(act),
-          price: act.nextDefaultPriceMoney?.amount || 0, // Fallback Amount
-          currency: defaultCurrency,                      // Fallback Currency
-          allPrices: allPrices,                           // 🌍 The "Menu" of Fixed Prices
-          durationWeeks: act.durationWeeks,
-          durationDays: act.durationDays,
-          durationHours: act.durationHours,
-          location: act.googlePlace?.name || act.locationCode?.location
-      };
-  };
-
   try {
     const isUpcomingMode = req.query.mode === 'upcoming';
     
-    // 1. FETCH FOLDER STRUCTURE
+    // --- 1. FETCH DEFAULT LIST (AED) ---
     const listPath = '/product-list.json/list';
     const listRes = await fetch(`https://api.bokun.io${listPath}`, { method: 'GET', headers: getHeaders('GET', listPath) });
     if (!listRes.ok) throw new Error("Failed to fetch folder tree");
     const listData = await listRes.json();
     
-    // 2. FETCH LIST ITEMS
-    const fetchProductsForList = async (listId) => {
-        const path = `/product-list.json/${listId}`;
+    // --- 2. HELPER: FETCH ITEMS WITH CURRENCY ---
+    // We use this to fetch the "Standard" list items twice (AED + USD)
+    const fetchProductsForList = async (listId, currency = null) => {
+        let path = `/product-list.json/${listId}`;
+        if (currency) path += `?currency=${currency}`; // 🔥 Force Bókun to Convert
+        
         const resp = await fetch(`https://api.bokun.io${path}`, { method: 'GET', headers: getHeaders('GET', path) });
         const data = await resp.json();
         return data.items || [];
     };
 
-    // 3. RECURSIVE HYDRATION
+    // --- 3. RECURSIVE HYDRATION (Now Fetches USD too!) ---
     const hydrateTree = async (nodes, onlyGroupTours = false) => {
         const promises = nodes.map(async (node) => {
             if (onlyGroupTours && (node.title.includes("Private") || node.title.includes("School"))) return node; 
@@ -126,13 +79,50 @@ export default async function handler(req, res) {
                 node.children = await hydrateTree(node.children, onlyGroupTours);
             } 
             else if (node.size > 0 && (!node.children || node.children.length === 0)) {
-                const realItems = await fetchProductsForList(node.id);
-                const processedChildren = await Promise.all(realItems.map(async (item) => {
+                
+                // 🔥 THE MAGIC: Fetch twice (Parallel)
+                const [defaultItems, usdItems] = await Promise.all([
+                    fetchProductsForList(node.id),          // Default (AED)
+                    fetchProductsForList(node.id, 'USD')    // Force USD
+                ]);
+
+                // Create a Map for fast USD lookup by ID
+                const usdMap = {};
+                usdItems.forEach(item => {
+                    if(item.activity) usdMap[item.activity.id] = item.activity.nextDefaultPriceMoney?.amount;
+                });
+
+                const processedChildren = defaultItems.map((item) => {
                     if (item.activity) {
-                        return simplifyProduct(item);
+                        const act = item.activity;
+                        
+                        // Build Price Map
+                        const priceMap = {};
+                        if (act.nextDefaultPriceMoney) {
+                            priceMap[act.nextDefaultPriceMoney.currency] = act.nextDefaultPriceMoney.amount;
+                        }
+                        
+                        // Inject USD from the second fetch
+                        if (usdMap[act.id]) {
+                            priceMap['USD'] = usdMap[act.id];
+                        }
+
+                        return {
+                            id: act.id,
+                            title: act.title,
+                            slug: slugify(act.title),
+                            optimizedImage: getBestImage(act),
+                            price: act.nextDefaultPriceMoney?.amount || 0,
+                            currency: act.nextDefaultPriceMoney?.currency || 'AED',
+                            allPrices: priceMap, // 🌍 Now contains AED + USD
+                            durationWeeks: act.durationWeeks,
+                            durationDays: act.durationDays,
+                            durationHours: act.durationHours,
+                            location: act.googlePlace?.name || act.locationCode?.location
+                        };
                     }
                     return item; 
-                }));
+                });
                 node.children = processedChildren;
             }
             return node;
@@ -146,6 +136,7 @@ export default async function handler(req, res) {
     if (!isUpcomingMode) return res.status(200).json(hydratedData);
 
     // --- UPCOMING MODE ONLY ---
+    // (Logic remains same, but we pass the "allPrices" map if needed later)
     if (isUpcomingMode) {
         let uniqueProducts = new Map(); 
         
@@ -189,6 +180,10 @@ export default async function handler(req, res) {
             
             const chunkPromises = chunk.map(async (product) => {
                 if (!product.id) return null;
+                // Note: Availabilities usually return the currency of the product or channel default.
+                // Fetching availabilities in multi-currency is complex (requires multiple calls per product).
+                // For upcoming, we will rely on the Base Product's "allPrices" map we built above.
+                
                 const availPath = `/activity.json/${product.id}/availabilities?start=${startStr}&end=${endStr}&includeSoldOut=false`;
                 
                 const fetchWithRetry = async (retries = 2) => {
@@ -218,7 +213,7 @@ export default async function handler(req, res) {
             results.push(...chunkResults.filter(p => p !== null));
         }
        
-        // --- 3. FLATTEN & PROCESS DATES (Clean Version) ---
+        // --- 3. FLATTEN & PROCESS DATES ---
         let calendarEntries = [];
         const cutoffDate = new Date(); 
         cutoffDate.setDate(cutoffDate.getDate() - 1); 
@@ -245,16 +240,12 @@ export default async function handler(req, res) {
                 if (daysToAdd < 0) daysToAdd = 0; 
                 endDate.setDate(startDate.getDate() + daysToAdd);
 
-                // Use the product's price/currency info
-                // (Upcoming dates use the base product's currency map)
-                let finalPrice = product.price;
-
                 calendarEntries.push({
-                    ...product,
+                    ...product, // Contains "allPrices" (AED + USD)
                     startDate: rawDate,
                     endDate: endDate.toISOString().split('T')[0], 
                     spotsLeft: dateEntry.availabilityCount,
-                    dateSpecificPrice: finalPrice 
+                    dateSpecificPrice: product.price // Use base price
                 });
             });
         });
