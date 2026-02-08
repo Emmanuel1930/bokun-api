@@ -7,6 +7,7 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
   
+  // Cache for 60s
   res.setHeader('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=604800');
   
   if (req.method === 'OPTIONS') { res.status(200).end(); return; }
@@ -51,7 +52,7 @@ export default async function handler(req, res) {
   try {
     const isUpcomingMode = req.query.mode === 'upcoming';
     
-    // 🔥 STEP 1: PARALLEL FETCH (Products + Rates)
+    // 🔥 STEP 1: PARALLEL FETCH (Products + ALL Rates)
     const listPath = '/product-list.json/list';
     const currencyPath = '/currency.json/findAll';
 
@@ -65,21 +66,29 @@ export default async function handler(req, res) {
     const listData = await listRes.json();
     const currencyData = await currencyRes.ok ? await currencyRes.json() : [];
 
-    // 🔥 STEP 2: PREPARE RATES MAP
-    // We need to know the rate of the "Base Currency" (likely AED or ISK) to convert to others.
-    // Bokun rates are relative to ISK (where ISK = 1).
+    // 🔥 STEP 2: BUILD RATES MAP
+    // We Map ALL currencies from the API response
     const ratesMap = {};
     currencyData.forEach(c => {
-        ratesMap[c.code] = c.rate;
+        if (c.code && c.rate) {
+            ratesMap[c.code] = c.rate;
+        }
     });
 
-    // Helper to convert price
+    // 🧮 PRECISE CONVERTER (No Early Rounding)
     const convertPrice = (amount, fromCurrency, toCurrency) => {
         if (!amount || !ratesMap[fromCurrency] || !ratesMap[toCurrency]) return null;
-        // Formula: Amount / FromRate * ToRate
-        // Example: 500 AED / 0.029 (AED Rate) * 0.008 (USD Rate)
-        const converted = (amount / ratesMap[fromCurrency]) * ratesMap[toCurrency];
-        return Math.round(converted); // Round to integer for clean display
+        
+        // 1. Convert to Base (ISK)
+        // Formula: Amount / Rate = Value in ISK
+        const valueInBase = amount / ratesMap[fromCurrency];
+        
+        // 2. Convert to Target
+        // Formula: Value in ISK * Target Rate
+        const converted = valueInBase * ratesMap[toCurrency];
+        
+        // 3. Final Rounding (Standard Math.round to match most displays)
+        return Math.round(converted); 
     };
 
     // --- FETCH LIST ITEMS ---
@@ -106,16 +115,17 @@ export default async function handler(req, res) {
                         const basePrice = act.nextDefaultPriceMoney?.amount || 0;
                         const baseCurrency = act.nextDefaultPriceMoney?.currency || 'AED';
 
-                        // 🔥 GENERATE ALL PRICES ON SERVER
+                        // 🔥 GENERATE ALL PRICES (The Full List)
+                        // We start with the base price
                         const allPrices = { [baseCurrency]: basePrice };
                         
-                        // Only generate prices for "Payment Supported" currencies or Top Currencies
-                        const topCurrencies = ['USD', 'EUR', 'GBP', 'AUD', 'CAD', 'SAR', 'QAR', 'INR']; 
-                        
-                        topCurrencies.forEach(targetCode => {
+                        // Loop through EVERY currency found in Bokun's system
+                        Object.keys(ratesMap).forEach(targetCode => {
                             if (targetCode !== baseCurrency) {
                                 const newPrice = convertPrice(basePrice, baseCurrency, targetCode);
-                                if (newPrice !== null) allPrices[targetCode] = newPrice;
+                                if (newPrice !== null) {
+                                    allPrices[targetCode] = newPrice;
+                                }
                             }
                         });
 
@@ -126,7 +136,7 @@ export default async function handler(req, res) {
                             optimizedImage: getBestImage(act),
                             price: basePrice,
                             currency: baseCurrency,
-                            allPrices: allPrices, // 🌍 Now contains ALL calculated prices
+                            allPrices: allPrices, // 🌍 Contains exact math for ALL currencies
                             durationWeeks: act.durationWeeks,
                             durationDays: act.durationDays,
                             durationHours: act.durationHours,
@@ -247,7 +257,7 @@ export default async function handler(req, res) {
                 endDate.setDate(startDate.getDate() + daysToAdd);
 
                 calendarEntries.push({
-                    ...product, // Contains "allPrices" (Calculated)
+                    ...product, 
                     startDate: rawDate,
                     endDate: endDate.toISOString().split('T')[0], 
                     spotsLeft: dateEntry.availabilityCount,
