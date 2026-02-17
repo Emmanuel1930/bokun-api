@@ -60,10 +60,10 @@ export default async function handler(req, res) {
     // --- 🔥 THE HEAVY LIFTER: FETCH ALL 55 CURRENCIES ---
     const fetchProductsMultiCurrency = async (listId) => {
         // 🌍 The Full List (55 Countries)
-        const currencies = [
-        'AED', 'SAR', 'QAR', 'KWD', 'OMR', // GCC
-        'USD', 'EUR', 'GBP',               // Majors
-        'AUD', 'CAD', 'CHF', 'CNY', 'JPY', 'INR' // Global
+const currencies = [
+        'AED', 'SAR', 'QAR', 'KWD', 'OMR', 'BHD', // GCC 6
+        'EUR', 'GBP', 'CAD', 'AUD',               // Others 4
+        'USD'                                     // Base
     ];
 
         const path = `/product-list.json/${listId}`;
