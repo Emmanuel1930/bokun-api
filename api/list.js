@@ -61,13 +61,10 @@ export default async function handler(req, res) {
     const fetchProductsMultiCurrency = async (listId) => {
         // 🌍 The Full List (55 Countries)
         const currencies = [
-            'AED', 'CHF', 'FJD', 'MXN', 'CLP', 'ZAR', 'TND', 'VND', 'AUD', 'ILS', 
-            'IDR', 'KYD', 'TRY', 'HKD', 'TWD', 'EUR', 'DKK', 'CAD', 'MYR', 'BGN', 
-            'MUR', 'NOK', 'GEL', 'RON', 'UYU', 'MAD', 'CRC', 'CZK', 'OMR', 'SEK', 
-            'BHD', 'ARS', 'QAR', 'SAR', 'INR', 'THB', 'XPF', 'CNY', 'KRW', 'JPY', 
-            'PLN', 'GBP', 'HUF', 'KWD', 'PHP', 'RUB', 'ISK', 'JMD', 'COP', 'USD', 
-            'SGD', 'VUV', 'PEN', 'NZD', 'BRL'
-        ];
+        'AED', 'SAR', 'QAR', 'KWD', 'OMR', // GCC
+        'USD', 'EUR', 'GBP',               // Majors
+        'AUD', 'CAD', 'CHF', 'CNY', 'JPY', 'INR' // Global
+    ];
 
         const path = `/product-list.json/${listId}`;
         
