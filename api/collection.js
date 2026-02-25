@@ -169,14 +169,27 @@ return `
                 "guidedLanguageReadingMaterial": [],
 
                 // Images
-                "keyPhoto": tour.keyPhoto ? tour.keyPhoto.originalUrl : "",
-                "keyPhotoMedium": tour.keyPhoto ? tour.keyPhoto.originalUrl.replace('original', 'medium') : "",
-                "keyPhotoSmall": tour.keyPhoto ? tour.keyPhoto.originalUrl.replace('original', 'small') : "",
-                "keyPhotoAltText": "",
+                // "keyPhoto": tour.keyPhoto ? tour.keyPhoto.originalUrl : "",
+                // "keyPhotoMedium": tour.keyPhoto ? tour.keyPhoto.originalUrl.replace('original', 'medium') : "",
+                // "keyPhotoSmall": tour.keyPhoto ? tour.keyPhoto.originalUrl.replace('original', 'small') : "",
+                // "keyPhotoAltText": "",
+                // "keyVideo": (tour.videos && tour.videos.length > 0) ? tour.videos[0].sourceUrl : (tour.keyVideo ? tour.keyVideo.url : ""),
+                // "otherPhotos": tour.photos ? tour.photos.map(p => ({
+                //     "originalUrl": p.originalUrl,
+                //     "alternateText": p.alternateText || null,
+                //     "description": p.description || null
+                // })) : [],
+
+
+              // Images
+                "keyPhoto": tour.keyPhoto ? tour.keyPhoto.originalUrl + "?w=1200&h=630&fit=crop" : "",
+                "keyPhotoMedium": tour.keyPhoto ? tour.keyPhoto.originalUrl + "?w=800" : "",
+                "keyPhotoSmall": tour.keyPhoto ? tour.keyPhoto.originalUrl + "?w=400" : "",
+                "keyPhotoAltText": `${safeTitle} tour image`, // 🎯 FIX: Automatically adds Alt Text
                 "keyVideo": (tour.videos && tour.videos.length > 0) ? tour.videos[0].sourceUrl : (tour.keyVideo ? tour.keyVideo.url : ""),
                 "otherPhotos": tour.photos ? tour.photos.map(p => ({
-                    "originalUrl": p.originalUrl,
-                    "alternateText": p.alternateText || null,
+                    "originalUrl": p.originalUrl + "?w=1000", // 🎯 FIX: Optimizes gallery images
+                    "alternateText": p.alternateText || `${safeTitle} gallery image`, // 🎯 FIX: Fallback Alt Text
                     "description": p.description || null
                 })) : [],
 
