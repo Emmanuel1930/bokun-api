@@ -48,7 +48,7 @@ return `
     <div class="timeline-marker"></div>
     <div class="timeline-content">
         <span class="timeline-day">Day ${item.day || '?'}</span>
-        <h3 class="timeline-title">${title}</h3>
+        <h2 class="timeline-title">${title}</h2>
         <div class="timeline-body">${body}</div>
     </div>
 </div>`;
