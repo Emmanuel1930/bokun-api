@@ -168,28 +168,16 @@ return `
                 "guidedLanguageHeadphones": [],
                 "guidedLanguageReadingMaterial": [],
 
-                // Images
-                // "keyPhoto": tour.keyPhoto ? tour.keyPhoto.originalUrl : "",
-                // "keyPhotoMedium": tour.keyPhoto ? tour.keyPhoto.originalUrl.replace('original', 'medium') : "",
-                // "keyPhotoSmall": tour.keyPhoto ? tour.keyPhoto.originalUrl.replace('original', 'small') : "",
-                // "keyPhotoAltText": "",
-                // "keyVideo": (tour.videos && tour.videos.length > 0) ? tour.videos[0].sourceUrl : (tour.keyVideo ? tour.keyVideo.url : ""),
-                // "otherPhotos": tour.photos ? tour.photos.map(p => ({
-                //     "originalUrl": p.originalUrl,
-                //     "alternateText": p.alternateText || null,
-                //     "description": p.description || null
-                // })) : [],
-
 
               // Images
-                "keyPhoto": tour.keyPhoto ? tour.keyPhoto.originalUrl + "?w=1000&h=560&fit=crop&q=65" : "",
-                "keyPhotoMedium": tour.keyPhoto ? tour.keyPhoto.originalUrl + "?w=800&q=65" : "",
-                "keyPhotoSmall": tour.keyPhoto ? tour.keyPhoto.originalUrl + "?w=400&q=65" : "",
+                "keyPhoto": tour.keyPhoto ? tour.keyPhoto.originalUrl + "?w=1000&h=560&fit=crop&q=60" : "",
+                "keyPhotoMedium": tour.keyPhoto ? tour.keyPhoto.originalUrl + "?w=800&q=60" : "",
+                "keyPhotoSmall": tour.keyPhoto ? tour.keyPhoto.originalUrl + "?w=400&q=60" : "",
                 "keyPhotoAltText": `${safeTitle} tour image`, // 🎯 FIX: Automatically adds Alt Text
                 "keyVideo": (tour.videos && tour.videos.length > 0) ? tour.videos[0].sourceUrl : (tour.keyVideo ? tour.keyVideo.url : ""),
                 "otherPhotos": tour.photos ? tour.photos.map(p => ({
-                    "originalUrl": p.originalUrl + "?w=700&q=65", // 🎯 FIX: Optimizes gallery images
-                    "alternateText": p.alternateText || `${safeTitle} gallery image`, // 🎯 FIX: Fallback Alt Text
+                    "originalUrl": p.originalUrl + "?w=700&q=60", 
+                    "alternateText": p.alternateText || `${safeTitle} gallery image`, 
                     "description": p.description || null
                 })) : [],
 
@@ -216,7 +204,7 @@ return `
     });
 
     // s-maxage=3600 caches the response
-    res.setHeader('Cache-Control', 'public, s-maxage=3600, stale-while-revalidate=604800');
+    res.setHeader('Cache-Control', 'public, s-maxage=3600, stale-while-revalidate=1209600');
     res.status(200).json(dudaCollection);
 
   } catch (error) {
