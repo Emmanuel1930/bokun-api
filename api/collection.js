@@ -188,7 +188,7 @@ return `
                 "keyPhotoAltText": `${safeTitle} tour image`, // 🎯 FIX: Automatically adds Alt Text
                 "keyVideo": (tour.videos && tour.videos.length > 0) ? tour.videos[0].sourceUrl : (tour.keyVideo ? tour.keyVideo.url : ""),
                 "otherPhotos": tour.photos ? tour.photos.map(p => ({
-                    "originalUrl": p.originalUrl + "?w=1000", // 🎯 FIX: Optimizes gallery images
+                    "originalUrl": p.originalUrl + "?w=800", // 🎯 FIX: Optimizes gallery images
                     "alternateText": p.alternateText || `${safeTitle} gallery image`, // 🎯 FIX: Fallback Alt Text
                     "description": p.description || null
                 })) : [],
