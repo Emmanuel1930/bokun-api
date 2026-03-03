@@ -172,6 +172,10 @@ return `
               // Images
                 "keyPhoto": tour.keyPhoto ? tour.keyPhoto.originalUrl + "?w=1000&h=560&fit=crop&q=60" : "",
                 "keyPhotoMedium": tour.keyPhoto ? tour.keyPhoto.originalUrl + "?w=800&q=60" : "",
+              
+                "og:image": tour.keyPhoto ? tour.keyPhoto.originalUrl + "?w=600&h=315&fit=crop&q=50" : "", // 🎯 FIX: Reduce for Social Media/Crawlers
+                "twitter:image": tour.keyPhoto ? tour.keyPhoto.originalUrl + "?w=600&h=315&fit=crop&q=50" : "",
+               
                 "keyPhotoSmall": tour.keyPhoto ? tour.keyPhoto.originalUrl + "?w=400&q=60" : "",
                 "keyPhotoAltText": `${safeTitle} tour image`, // 🎯 FIX: Automatically adds Alt Text
                 "keyVideo": (tour.videos && tour.videos.length > 0) ? tour.videos[0].sourceUrl : (tour.keyVideo ? tour.keyVideo.url : ""),
