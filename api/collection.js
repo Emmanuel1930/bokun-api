@@ -182,13 +182,13 @@ return `
 
 
               // Images
-                "keyPhoto": tour.keyPhoto ? tour.keyPhoto.originalUrl + "?w=1000&h=560&fit=crop&q=75" : "",
-                "keyPhotoMedium": tour.keyPhoto ? tour.keyPhoto.originalUrl + "?w=800&q=70" : "",
-                "keyPhotoSmall": tour.keyPhoto ? tour.keyPhoto.originalUrl + "?w=400&q=70" : "",
+                "keyPhoto": tour.keyPhoto ? tour.keyPhoto.originalUrl + "?w=1000&h=560&fit=crop&q=65" : "",
+                "keyPhotoMedium": tour.keyPhoto ? tour.keyPhoto.originalUrl + "?w=800&q=65" : "",
+                "keyPhotoSmall": tour.keyPhoto ? tour.keyPhoto.originalUrl + "?w=400&q=65" : "",
                 "keyPhotoAltText": `${safeTitle} tour image`, // 🎯 FIX: Automatically adds Alt Text
                 "keyVideo": (tour.videos && tour.videos.length > 0) ? tour.videos[0].sourceUrl : (tour.keyVideo ? tour.keyVideo.url : ""),
                 "otherPhotos": tour.photos ? tour.photos.map(p => ({
-                    "originalUrl": p.originalUrl + "?w=700&q=70", // 🎯 FIX: Optimizes gallery images
+                    "originalUrl": p.originalUrl + "?w=700&q=65", // 🎯 FIX: Optimizes gallery images
                     "alternateText": p.alternateText || `${safeTitle} gallery image`, // 🎯 FIX: Fallback Alt Text
                     "description": p.description || null
                 })) : [],
