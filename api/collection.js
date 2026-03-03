@@ -215,6 +215,8 @@ return `
         };
     });
 
+    // s-maxage=3600 caches the response
+    res.setHeader('Cache-Control', 'public, s-maxage=3600, stale-while-revalidate=604800');
     res.status(200).json(dudaCollection);
 
   } catch (error) {
