@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 
 export default async function handler(req, res) {
-  // --- 1. ENABLE CORS (Standard Setup) ---
+  // --- 1. ENABLE CORS (Standard Setup)  ---
   res.setHeader('Access-Control-Allow-Credentials', true);
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
