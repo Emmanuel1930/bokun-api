@@ -4,15 +4,15 @@ export default async function handler(req, res) {
     res.setHeader('Cache-Control', 'public, s-maxage=1209600, stale-while-revalidate=3600');
 
     try {
-        const response = await fetch('https://api.bokun.io/gift-card/configuration.json', {
-            method: 'GET',
-            headers: {
-                'X-Bokun-App-Secret': process.env.BOKUN_SECRET,
-                'X-Bokun-App-Key': process.env.BOKUN_KEY,
-                'Accept': 'application/json'
-            }
-        });
-
+        // Replace your existing fetch URL with this one:
+const response = await fetch('https://api.bokun.io/gift-card/configuration.json', {
+    method: 'GET',
+    headers: {
+        'X-Bokun-App-Secret': process.env.BOKUN_SECRET,
+        'X-Bokun-App-Key': process.env.BOKUN_KEY,
+        'Accept': 'application/json'
+    }
+});
         if (!response.ok) {
             throw new Error(`Bókun Error: ${response.status}`);
         }
