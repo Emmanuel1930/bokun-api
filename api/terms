@@ -1,6 +1,6 @@
 (function() {
-    const API_URL = 'https://api.bokun.io/restapi/v2.0/settings/booking-channel';
-    // Replace these with your actual keys
+    // UPDATED ENDPOINT for v2.0
+    const API_URL = 'https://api.bokun.io/restapi/v2.0/marketplace/vendor/self/';
     const ACCESS_KEY = 'YOUR_ACCESS_KEY';
     const SECRET_KEY = 'YOUR_SECRET_KEY';
 
@@ -17,24 +17,31 @@
                 }
             });
 
-            if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
+            if (!response.ok) {
+                const errorData = await response.text();
+                throw new Error(`HTTP ${response.status}: ${errorData}`);
+            }
 
             const data = await response.json();
             
-            // Bókun returns the T&C as an HTML string
-            if (data && data.termsAndConditions) {
-                termsContainer.innerHTML = data.termsAndConditions;
-                console.log("📜 Terms & Conditions loaded successfully");
+            // Log the whole data once to see exactly where Bókun put the T&Cs
+            console.log("📦 Bókun Self Data:", data);
+
+            // Check for terms in common locations
+            const termsHtml = data.termsAndConditions || data.companyPolicies || data.description;
+            
+            if (termsHtml) {
+                termsContainer.innerHTML = termsHtml;
+                console.log("📜 Terms found and loaded!");
             } else {
-                termsContainer.innerHTML = "<p>Terms and conditions are not set in Bókun.</p>";
+                termsContainer.innerHTML = "<p>Data received, but no Terms & Conditions text found in this field.</p>";
             }
 
         } catch (error) {
-            console.error("🔥 Error fetching T&Cs:", error);
-            termsContainer.innerHTML = "<p>Unable to load Terms at this time.</p>";
+            console.error("🔥 Error:", error);
+            termsContainer.innerHTML = `<p>Error: ${error.message}</p>`;
         }
     }
 
-    // Run the function
     loadTerms();
 })();
