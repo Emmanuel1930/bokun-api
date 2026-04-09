@@ -181,7 +181,7 @@ return `
                 "keyVideo": (tour.videos && tour.videos.length > 0) ? tour.videos[0].sourceUrl : (tour.keyVideo ? tour.keyVideo.url : ""),
                 "otherPhotos": tour.photos ? tour.photos.map(p => ({
                     // "originalUrl": p.originalUrl + "?w=700&q=60",
-                   "lazyUrl": p.originalUrl + "?w=800&q=50&format=webp",
+                   "originalUrl": p.originalUrl + "?w=800&q=50&format=webp",
                     "alternateText": p.alternateText || `${safeTitle} gallery image`, 
                     "description": p.description || null
                 })) : [],
