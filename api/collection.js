@@ -186,8 +186,8 @@ return `
                      : p.originalUrl + "?format=webp&w=100&q=20",
                   
                     "alternateText": p.alternateText || `${safeTitle} gallery image`, 
-                    // "description": p.description || null
-                    "description": p.originalUrl + "?format=webp&w=800&q=50" // Hide the High-Res link here
+                    "description": p.description || null
+                    
                 })) : [],
 
                 // Legacy Lists
