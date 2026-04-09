@@ -180,11 +180,8 @@ return `
                 "keyPhotoAltText": `${safeTitle} tour image`, // 🎯 FIX: Automatically adds Alt Text
                 "keyVideo": (tour.videos && tour.videos.length > 0) ? tour.videos[0].sourceUrl : (tour.keyVideo ? tour.keyVideo.url : ""),
                 "otherPhotos": tour.photos ? tour.photos.map(p => ({
-                    // "originalUrl": p.originalUrl + "?w=700&q=60",
-                   "originalUrl": index < 10
-                     ? p.originalUrl + "?format=webp&w=800&q=50"
-                     : p.originalUrl + "?format=webp&w=100&q=20",
-                  
+                    "originalUrl": p.originalUrl + "?w=700&q=60",
+              
                     "alternateText": p.alternateText || `${safeTitle} gallery image`, 
                     "description": p.description || null
                     
