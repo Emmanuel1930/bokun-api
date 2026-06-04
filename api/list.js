@@ -197,10 +197,22 @@ const currencies = [
         // const endStr = futureDate.toISOString().split('T')[0];
         const productsToCheck = Array.from(uniqueProducts.values());
               // DATE RANGE (Strictly UAE Timezone)
-        const todayStrUAE = new Intl.DateTimeFormat('en-CA', { 
-            timeZone: 'Asia/Dubai', year: 'numeric', month: '2-digit', day: '2-digit' 
-        }).format(new Date());
-
+                // DATE RANGE (Strictly UAE Timezone - Bulletproof Vercel Version)
+        const formatter = new Intl.DateTimeFormat('en-US', {
+            timeZone: 'Asia/Dubai',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit'
+        });
+        
+        const parts = formatter.formatToParts(new Date());
+        const uaeYear = parts.find(p => p.type === 'year').value;
+        const uaeMonth = parts.find(p => p.type === 'month').value;
+        const uaeDay = parts.find(p => p.type === 'day').value;
+        
+        // This guarantees a perfect "YYYY-MM-DD" string, no matter what Vercel does
+        const todayStrUAE = `${uaeYear}-${uaeMonth}-${uaeDay}`;
+        
         const todayUAE = new Date(todayStrUAE + 'T00:00:00Z'); 
         
         const yesterdayUAE = new Date(todayUAE);
