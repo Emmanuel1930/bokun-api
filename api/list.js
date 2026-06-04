@@ -30,7 +30,7 @@ export default async function handler(req, res) {
     .replace(/\s+/g, '-')
     .replace(/[^\w\-]+/g, '')
     .replace(/\-\-+/g, '-') : "";
- 
+
   const getBestImage = (activity) => {
       let photo = activity.keyPhoto;
       if (!photo && activity.photos && activity.photos.length > 0) {
@@ -187,45 +187,15 @@ const currencies = [
         if (groupFolder) collect(groupFolder.children || []);
         else collect(hydratedData); 
 
-        // DATE RANGE previous code 
-        // const today = new Date();
-        // const futureDate = new Date();
-        // futureDate.setMonth(today.getMonth() + 6);
-        // const yesterday = new Date(today);
-        // yesterday.setDate(today.getDate() - 1);
-        // const startStr = yesterday.toISOString().split('T')[0];
-        // const endStr = futureDate.toISOString().split('T')[0];
+        // DATE RANGE
+        const today = new Date();
+        const futureDate = new Date();
+        futureDate.setMonth(today.getMonth() + 6);
+        const yesterday = new Date(today);
+        yesterday.setDate(today.getDate() - 1);
+        const startStr = yesterday.toISOString().split('T')[0];
+        const endStr = futureDate.toISOString().split('T')[0];
         const productsToCheck = Array.from(uniqueProducts.values());
-              // DATE RANGE (Strictly UAE Timezone)
-                // DATE RANGE (Strictly UAE Timezone - Bulletproof Vercel Version)
-        const formatter = new Intl.DateTimeFormat('en-US', {
-            timeZone: 'Asia/Dubai',
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit'
-        });
-        
-        const parts = formatter.formatToParts(new Date());
-        const uaeYear = parts.find(p => p.type === 'year').value;
-        const uaeMonth = parts.find(p => p.type === 'month').value;
-        const uaeDay = parts.find(p => p.type === 'day').value;
-        
-        // This guarantees a perfect "YYYY-MM-DD" string, no matter what Vercel does
-        const todayStrUAE = `${uaeYear}-${uaeMonth}-${uaeDay}`;
-        
-        const todayUAE = new Date(todayStrUAE + 'T00:00:00Z'); 
-        
-        const yesterdayUAE = new Date(todayUAE);
-        yesterdayUAE.setDate(todayUAE.getDate() - 1);
-        
-        const futureUAE = new Date(todayUAE);
-        futureUAE.setMonth(todayUAE.getMonth() + 6);
-
-        const startStr = yesterdayUAE.toISOString().split('T')[0];
-        const endStr = futureUAE.toISOString().split('T')[0];
-        const cutoffStr = startStr;
-      // end of previous code
-      
 
         const results = [];
         
@@ -256,35 +226,20 @@ const currencies = [
         }
        
         let calendarEntries = [];
-      // chnaging the time zone 
-        // const cutoffDate = new Date(); 
-        // cutoffDate.setDate(cutoffDate.getDate() - 1); 
-        // cutoffDate.setHours(0,0,0,0);
+        const cutoffDate = new Date(); 
+        cutoffDate.setDate(cutoffDate.getDate() - 1); 
+        cutoffDate.setHours(0,0,0,0);
 
         results.forEach(product => {
             if (!product.nextDates) return;
             product.nextDates.forEach(dateEntry => {
                 let rawDate = dateEntry.date;
                 if (!rawDate && dateEntry.startTime && dateEntry.startTime.includes('T')) rawDate = dateEntry.startTime.split('T')[0];
-                if (!rawDate) return;
-               // new logic
-                if (rawDate < cutoffStr) return; 
+                if (!rawDate) return; 
+                const startDate = new Date(rawDate);
+                if (startDate < cutoffDate) return;
 
-                const startDate = new Date(rawDate + 'T00:00:00Z');
                 let endDate = new Date(startDate);
-            
-                // const startDate = new Date(rawDate);
-                // if (startDate < cutoffDate) return;
-              
-                // let endDate = new Date(startDate);
-               
-              
-               
-              
-             
-              
-
-              //end of new logic
                 let daysToAdd = 0;
                 if (product.durationWeeks) daysToAdd = (product.durationWeeks * 7) - 1;
                 else if (product.durationDays) daysToAdd = product.durationDays - 1;
