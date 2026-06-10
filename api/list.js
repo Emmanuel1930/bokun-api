@@ -245,10 +245,12 @@ export default async function handler(req, res) {
                     else if (product.durationDays) daysToAdd = product.durationDays - 1;
                     
                     // --- SALALAH FIX: Add +1 day if it departs on Thursday ---
+                    let displayDurationDays = product.durationDays || 0;
                     if (product.title && product.title.toLowerCase().includes('salalah')) {
                         // Use getUTCDay() to safely get the day of the week from the YYYY-MM-DD string
                         if (startDate.getUTCDay() === 4) { // 4 = Thursday
                             daysToAdd += 1;
+                            displayDurationDays += 1;
                         }
                     }
 
@@ -257,6 +259,7 @@ export default async function handler(req, res) {
 
                     calendarEntries.push({
                         ...product,
+                        durationDays: displayDurationDays,
                         startDate: rawDate,
                         endDate: endDate.toISOString().split('T')[0],
                         spotsLeft: dateEntry.availabilityCount,
