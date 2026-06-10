@@ -244,12 +244,19 @@ export default async function handler(req, res) {
                     if (product.durationWeeks) daysToAdd = (product.durationWeeks * 7) - 1;
                     else if (product.durationDays) daysToAdd = product.durationDays - 1;
                     
-                    // --- SALALAH FIX: Add +1 day if it departs on Thursday ---
+                    // --- SALALAH FIX: Shift start date to Wednesday and add +1 to duration ---
                     let displayDurationDays = product.durationDays || 0;
+                    let displayStartDate = rawDate;
                     if (product.title && product.title.toLowerCase().includes('salalah')) {
                         // Use getUTCDay() to safely get the day of the week from the YYYY-MM-DD string
                         if (startDate.getUTCDay() === 4) { // 4 = Thursday
-                            daysToAdd += 1;
+                            // Move start date back 1 day (to Wednesday)
+                            const shiftedStart = new Date(startDate);
+                            shiftedStart.setUTCDate(shiftedStart.getUTCDate() - 1);
+                            displayStartDate = shiftedStart.toISOString().split('T')[0];
+                            
+                            // Increase duration by 1 day so the widget displays "4 Days" 
+                            // and correctly calculates the end date as the 25th (22 + 3 = 25)
                             displayDurationDays += 1;
                         }
                     }
@@ -260,7 +267,7 @@ export default async function handler(req, res) {
                     calendarEntries.push({
                         ...product,
                         durationDays: displayDurationDays,
-                        startDate: rawDate,
+                        startDate: displayStartDate,
                         endDate: endDate.toISOString().split('T')[0],
                         spotsLeft: dateEntry.availabilityCount,
                         dateSpecificPrice: product.price
