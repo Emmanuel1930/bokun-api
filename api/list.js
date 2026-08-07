@@ -188,13 +188,26 @@ export default async function handler(req, res) {
             else collect(hydratedData);
 
             // DATE RANGE
-            const today = new Date();
-            const futureDate = new Date();
-            futureDate.setMonth(today.getMonth() + 6);
-            const yesterday = new Date(today);
-            yesterday.setDate(today.getDate() - 1);
-            const startStr = yesterday.toISOString().split('T')[0];
-            const endStr = futureDate.toISOString().split('T')[0];
+            // Every date and time here is resolved in the OPERATOR's timezone (UAE),
+            // never the server's. Vercel runs in UTC, so without this the calendar
+            // shifts by a day for anything happening in the first 4 hours of a UAE day.
+            const OPERATOR_TIMEZONE = 'Asia/Dubai';
+
+            const operatorDateStr = (date) => new Intl.DateTimeFormat('en-CA', {
+                timeZone: OPERATOR_TIMEZONE, year: 'numeric', month: '2-digit', day: '2-digit'
+            }).format(date); // -> "YYYY-MM-DD"
+
+            const operatorTimeStr = (date) => new Intl.DateTimeFormat('en-GB', {
+                timeZone: OPERATOR_TIMEZONE, hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+            }).format(date); // -> "HH:mm"
+
+            const nowUtc = new Date();
+            const futureDate = new Date(nowUtc);
+            futureDate.setMonth(nowUtc.getMonth() + 6);
+            const yesterday = new Date(nowUtc);
+            yesterday.setDate(nowUtc.getDate() - 1);
+            const startStr = operatorDateStr(yesterday);
+            const endStr = operatorDateStr(futureDate);
             const productsToCheck = Array.from(uniqueProducts.values());
 
             const results = [];
@@ -226,39 +239,92 @@ export default async function handler(req, res) {
             }
 
             let calendarEntries = [];
-            const cutoffDate = new Date();
-            cutoffDate.setDate(cutoffDate.getDate() - 1);
-            cutoffDate.setHours(0, 0, 0, 0);
+
+            // --- OVERNIGHT TRAVEL PRODUCTS ---
+            // Bókun stores ONE duration per product, but Salalah sells both a morning and
+            // an evening departure. The evening one travels out overnight, so it spans one
+            // more calendar day than the stored duration.
+            //
+            // Scoped by Bókun product ID so it can NEVER leak onto another product — not
+            // even a future "Salalah Day Trip", which a title match would have caught.
+            // 782352 = Salalah's Khareef: Waterfalls & Greenery. Add IDs here to extend.
+            const OVERNIGHT_TRAVEL_PRODUCT_IDS = [782352];
+            const EVENING_DEPARTURE_HOUR = 12; // operator (UAE) local time
+
+            // Same cut-off the API was queried with: yesterday, in the operator's timezone.
+            const cutoffStr = startStr;
 
             results.forEach(product => {
                 if (!product.nextDates) return;
                 product.nextDates.forEach(dateEntry => {
                     let rawDate = dateEntry.date;
-                    if (!rawDate && dateEntry.startTime && dateEntry.startTime.includes('T')) rawDate = dateEntry.startTime.split('T')[0];
+                    if (!rawDate && dateEntry.startTime && String(dateEntry.startTime).includes('T')) rawDate = dateEntry.startTime;
                     if (!rawDate) return;
-                    const startDate = new Date(rawDate);
-                    if (startDate < cutoffDate) return;
 
+                    // Bókun may send an epoch number or an ISO string; normalise both to the
+                    // operator's calendar date so the day never shifts under UTC.
+                    rawDate = typeof rawDate === 'number'
+                        ? operatorDateStr(new Date(rawDate))
+                        : String(rawDate).split('T')[0];
+
+                    // YYYY-MM-DD strings compare correctly as strings — no Date parsing needed.
+                    if (rawDate < cutoffStr) return;
+
+                    // Calendar arithmetic only: anchor at UTC midnight and stay in UTC, so
+                    // adding days is pure day-counting with no timezone drift.
+                    const startDate = new Date(`${rawDate}T00:00:00Z`);
                     let endDate = new Date(startDate);
                     let daysToAdd = 0;
                     if (product.durationWeeks) daysToAdd = (product.durationWeeks * 7) - 1;
                     else if (product.durationDays) daysToAdd = product.durationDays - 1;
 
-                    // --- SALALAH FIX: Add +1 day to duration and end date ---
+                    // --- EVENING DEPARTURE: spans one extra calendar day ---
+                    // The extra day comes from the departure TIME, not the weekday. A product
+                    // can sell a morning and an evening departure on the SAME date; only the
+                    // evening one runs a day longer.
+                    const rawStartTime = dateEntry.startTime == null ? '' : String(dateEntry.startTime);
+                    // The clock time can arrive as a plain "HH:mm", as a full timestamp in
+                    // startTime, or only inside the date field. Cover all three, otherwise
+                    // the time is lost and an evening departure is silently treated as morning.
+                    const timestamp = rawStartTime.includes('T')
+                        ? rawStartTime
+                        : (typeof dateEntry.date === 'string' && dateEntry.date.includes('T') ? dateEntry.date : '');
+
+                    let departureTime = '';
+                    if (timestamp) {
+                        // Bókun reports availability in the OPERATOR's local time. Only convert
+                        // when the value actually carries a zone (Z or +04:00) — a bare
+                        // "2026-08-21T19:00:00" is already operator-local and must be read
+                        // literally, or Node would parse it as server time and shift it.
+                        const hasZone = /(?:Z|[+-]\d{2}:?\d{2})$/.test(timestamp);
+                        const stamp = hasZone ? new Date(timestamp) : null;
+                        departureTime = (stamp && !isNaN(stamp.getTime()))
+                            ? operatorTimeStr(stamp)
+                            : timestamp.split('T')[1].slice(0, 5);
+                    } else if (rawStartTime) {
+                        departureTime = rawStartTime; // already operator-local, e.g. "19:00"
+                    }
+
+                    const startHour = parseInt(departureTime.split(':')[0], 10);
+                    const isEveningDeparture = Number.isFinite(startHour) && startHour >= EVENING_DEPARTURE_HOUR;
+
+                    const travelsOvernight = OVERNIGHT_TRAVEL_PRODUCT_IDS.includes(Number(product.id));
+
                     let displayDurationDays = product.durationDays || 0;
-                    if (product.title && product.title.toLowerCase().includes('salalah')) {
-                        // Use getUTCDay() to safely get the day of the week from the YYYY-MM-DD string
-                        if (startDate.getUTCDay() === 4) { // 4 = Thursday
-                            daysToAdd += 1;
-                            displayDurationDays += 1;
-                        }
+                    if (travelsOvernight && isEveningDeparture) {
+                        daysToAdd += 1;
+                        displayDurationDays += 1;
                     }
 
                     if (daysToAdd < 0) daysToAdd = 0;
-                    endDate.setDate(startDate.getDate() + daysToAdd);
+                    endDate.setUTCDate(startDate.getUTCDate() + daysToAdd);
 
                     calendarEntries.push({
                         ...product,
+                        // Unique per departure, so two start times on the same date are not
+                        // mistaken for duplicates by the front-end.
+                        departureKey: `${product.id}|${rawDate}|${departureTime || 'na'}`,
+                        departureTime: departureTime || null,
                         durationDays: displayDurationDays,
                         startDate: rawDate,
                         endDate: endDate.toISOString().split('T')[0],
@@ -268,7 +334,12 @@ export default async function handler(req, res) {
                 });
             });
 
-            calendarEntries.sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
+            calendarEntries.sort((a, b) => {
+                const diff = new Date(a.startDate).getTime() - new Date(b.startDate).getTime();
+                if (diff !== 0) return diff;
+                // Same date: order by departure time so the morning trip lists first.
+                return (a.departureTime || '').localeCompare(b.departureTime || '');
+            });
             return res.status(200).json(calendarEntries);
         }
     } catch (error) { res.status(500).json({ error: error.message }); }
