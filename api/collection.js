@@ -108,15 +108,15 @@ return `
     return pairs.filter(p => p.question);
   };
 
-  // Native <details> accordion: toggles with no JS and no URL hash. Add name="faq" to summary's parent for one-at-a-time.
+  // Plain semantic markup with class hooks only - the Duda widget owns the accordion behaviour and styling.
   const formatFaq = (pairs) => {
     if (!pairs.length) return "";
 
     const items = pairs.map(pair => `
-    <details class="faq-item">
-        <summary class="faq-question">${escapeHtml(pair.question)}</summary>
+    <div class="faq-item">
+        <h3 class="faq-question">${escapeHtml(pair.question)}</h3>
         <div class="faq-answer">${pair.answerHtml}</div>
-    </details>`).join('');
+    </div>`).join('');
 
     return `<div class="faq-list">${items}
 </div>`;
