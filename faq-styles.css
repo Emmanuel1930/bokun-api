@@ -1,5 +1,5 @@
-/* FAQ accordion, CSS only - paste into the FAQ element's Custom CSS > General CSS for all devices. No JavaScript.
-   Uses native <details>, so rows open and close freely with no URL change and no scroll jump.
+/* FAQ accordion - paste into the FAQ element's Custom CSS > General CSS for all devices.
+   Default state is expanded; collapsing only kicks in under .faq-js, so the Q&A stays readable without JS.
    Do not style this element in Duda's design panel - its generated u_XXXXX !important rules outrank these. */
 
 .faq-list {
@@ -16,13 +16,8 @@
 .faq-list .faq-item { border-bottom: 1px solid var(--faq-divider); }
 
 .faq-list .faq-question {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
   margin: 0 !important;
-  padding: var(--faq-row-padding) 0 !important;
-  cursor: pointer;
+  padding: 0 !important;
   font-family: var(--faq-font) !important;
   font-size: 18px !important;
   font-weight: 700 !important;
@@ -30,19 +25,37 @@
   color: var(--faq-text) !important;
   text-transform: none !important;
   letter-spacing: normal !important;
-  list-style: none !important;
 }
 
-/* Kill the native marker and any chevron Duda's theme adds to summary elements. */
-.faq-list .faq-question::-webkit-details-marker { display: none !important; }
-.faq-list .faq-question::marker { content: '' !important; }
-.faq-list .faq-question::before { content: none !important; display: none !important; }
+/* Spacing for the no-JS fallback, where no button exists. */
+.faq-list:not(.faq-js) .faq-question { padding: var(--faq-row-padding) 0 6px !important; }
 
-.faq-list .faq-question:hover { opacity: 0.72; }
-.faq-list .faq-question:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+/* The button faq-accordion.js injects inside the h3. */
+.faq-list .faq-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  padding: var(--faq-row-padding) 0;
+  margin: 0;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  cursor: pointer;
+  text-align: left;
+  font: inherit !important;
+  color: inherit !important;
+  text-transform: none !important;
+  letter-spacing: normal !important;
+}
+
+.faq-list .faq-toggle:hover { opacity: 0.72; }
+.faq-list .faq-toggle:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
 
 /* Chevron, drawn in CSS so there is no icon dependency. */
-.faq-list .faq-question::after {
+.faq-list .faq-toggle::after {
   content: '';
   flex: 0 0 auto;
   width: 9px;
@@ -53,10 +66,11 @@
   transition: transform 0.25s ease;
 }
 
-.faq-list .faq-item[open] > .faq-question::after { transform: rotate(-135deg) translateY(-1px); }
+.faq-list .faq-item.is-open .faq-toggle::after { transform: rotate(-135deg) translateY(-1px); }
 
-/* Collapsed by the browser, not by CSS - the answers stay in the HTML, which is what crawlers read. */
-.faq-list .faq-answer { padding: 0 0 20px; animation: faq-reveal 0.25s ease; }
+.faq-list .faq-answer { padding: 0 0 20px; }
+.faq-list.faq-js .faq-answer { display: none; }
+.faq-list.faq-js .faq-item.is-open .faq-answer { display: block; animation: faq-reveal 0.25s ease; }
 
 @keyframes faq-reveal {
   from { opacity: 0; transform: translateY(-4px); }
@@ -64,8 +78,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .faq-list .faq-question::after { transition: none; }
-  .faq-list .faq-answer { animation: none; }
+  .faq-list .faq-toggle::after { transition: none; }
+  .faq-list.faq-js .faq-item.is-open .faq-answer { animation: none; }
 }
 
 /* Answer typography matches the itinerary body. */
