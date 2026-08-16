@@ -115,19 +115,23 @@ return `
 
   // --- HELPER: FORMAT FAQ INTO HTML ---
   // Like formatItinerary: structure + class hooks only, styling lives in Duda's CSS.
-  // <details>/<summary> gives a native accordion - no JS, which matters because Duda
-  // Rich Text elements render markup but do not run scripts.
+  //
+  // Plain divs and headings on purpose. Duda's Text Block sanitizes unknown tags, so
+  // <details>/<summary> get stripped along with the answers inside them - which leaves
+  // the answers out of the page HTML entirely, breaking both the crawlability
+  // requirement and the JSON-LD match. These tags survive sanitizing, so the full Q&A
+  // is always in the page; faq-accordion.js layers the collapse behaviour on top.
+  //
+  // Questions are h3 so they nest under the page's "Frequently Asked Questions" h2.
   // Returns "" when there are no pairs so the Duda block can be hidden, never "null".
   const formatFaq = (pairs) => {
     if (!pairs.length) return "";
 
-    // name= makes it an exclusive accordion (one open at a time) natively; older
-    // browsers ignore it and simply allow multiple open.
     const items = pairs.map(pair => `
-    <details class="faq-item" name="faq-accordion">
-        <summary class="faq-question">${escapeHtml(pair.question)}</summary>
+    <div class="faq-item">
+        <h3 class="faq-question">${escapeHtml(pair.question)}</h3>
         <div class="faq-answer">${pair.answerHtml}</div>
-    </details>`).join('');
+    </div>`).join('');
 
     return `<div class="faq-list">${items}
 </div>`;
