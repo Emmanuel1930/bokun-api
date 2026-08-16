@@ -54,7 +54,102 @@ return `
 </div>`;
     }).join('');
   };
-  
+
+  // --- CUSTOM FIELD REGISTRY ---
+  // Bokun returns title:null, so the label lives here, keyed by code.
+  // Unregistered fields still pass through in the generic `customFields` array.
+  const CUSTOM_FIELD_REGISTRY = {
+    Field101: { label: 'FAQ', render: 'faq' }
+  };
+
+  // --- HELPER: HTML ENTITY DECODE / ESCAPE ---
+  // Bokun's rich text is entity-encoded; JSON-LD needs plain chars, HTML needs them back.
+  const NAMED_ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
+
+  const decodeEntities = (text) => String(text)
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCharCode(parseInt(n, 16)))
+    .replace(/&(amp|lt|gt|quot|apos|nbsp);/gi, (_, n) => NAMED_ENTITIES[n.toLowerCase()]);
+
+  const escapeHtml = (text) => String(text)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+  const stripTags = (html) => decodeEntities(String(html).replace(/<[^>]*>/g, ' '))
+    .replace(/\s+/g, ' ').trim();
+
+  // --- HELPER: PARSE Q&A PAIRS OUT OF THE FAQ HTML ---
+  // Bokun sends one flat HTML blob. A fully-bold block (or heading) opens a question;
+  // following blocks are its answer until the next question. Empty <p></p> are spacers.
+  const BLOCK_RE = /<(p|h[1-6]|ul|ol|div|blockquote)\b[^>]*>([\s\S]*?)<\/\1>/gi;
+  const FULLY_BOLD_RE = /^\s*(?:<(?:strong|b)\b[^>]*>[\s\S]*?<\/(?:strong|b)>\s*)+$/i;
+
+  const parseQaPairs = (html) => {
+    if (!html || typeof html !== 'string') return [];
+
+    const pairs = [];
+    let current = null;
+    let match;
+
+    BLOCK_RE.lastIndex = 0;
+    while ((match = BLOCK_RE.exec(html)) !== null) {
+      const tag = match[1].toLowerCase();
+      const inner = match[2];
+      const text = stripTags(inner);
+
+      if (!text) continue; // empty <p></p> spacer
+
+      if (/^h[1-6]$/.test(tag) || FULLY_BOLD_RE.test(inner)) {
+        if (current) pairs.push(current);
+        current = { question: text, answerHtml: '', answerText: '' };
+      } else if (current) {
+        // Re-wrapped bare, which drops Bokun's inline styles so site CSS wins.
+        current.answerHtml += `<${tag}>${inner}</${tag}>`;
+        current.answerText += (current.answerText ? ' ' : '') + text;
+      }
+    }
+    if (current) pairs.push(current);
+
+    return pairs.filter(p => p.question);
+  };
+
+  // --- HELPER: FORMAT FAQ INTO HTML ---
+  // Like formatItinerary: structure + class hooks only, styling lives in Duda's CSS.
+  // <details>/<summary> gives a native accordion - no JS, which matters because Duda
+  // Rich Text elements render markup but do not run scripts.
+  // Returns "" when there are no pairs so the Duda block can be hidden, never "null".
+  const formatFaq = (pairs) => {
+    if (!pairs.length) return "";
+
+    // name= makes it an exclusive accordion (one open at a time) natively; older
+    // browsers ignore it and simply allow multiple open.
+    const items = pairs.map(pair => `
+    <details class="faq-item" name="faq-accordion">
+        <summary class="faq-question">${escapeHtml(pair.question)}</summary>
+        <div class="faq-answer">${pair.answerHtml}</div>
+    </details>`).join('');
+
+    return `<div class="faq-list">${items}
+</div>`;
+  };
+
+  // --- HELPER: BUILD schema.org FAQPage JSON-LD ---
+  // Bare JSON string for <script type="application/ld+json">{{faqSchema}}</script>.
+  // `<` escaped so answer markup can never terminate that script tag early.
+  const buildFaqSchema = (pairs) => {
+    if (!pairs.length) return "";
+
+    return JSON.stringify({
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      "mainEntity": pairs.map(pair => ({
+        "@type": "Question",
+        "name": pair.question,
+        "acceptedAnswer": { "@type": "Answer", "text": pair.answerText }
+      }))
+    }).replace(/</g, '\\u003c');
+  };
+
   try {
     // --- STEP 1: Search for IDs (Using 'items') ---
     const searchPath = '/activity.json/search';
@@ -130,6 +225,23 @@ return `
         // Location
         const startPoint = (tour.startPoints && tour.startPoints.length > 0) ? tour.startPoints[0] : {};
 
+        // Custom Fields - all pass through generically; registered ones also get a renderer.
+        const describedCustomFields = (Array.isArray(tour.customFields) ? tour.customFields : [])
+            .map(field => {
+                const known = CUSTOM_FIELD_REGISTRY[field.code] || {};
+                return {
+                    "code": field.code || "",
+                    "label": known.label || field.title || field.code || "",
+                    "type": field.type || "",
+                    "value": typeof field.value === 'string' ? field.value : ""
+                };
+            });
+
+        const faqField = describedCustomFields.find(
+            field => (CUSTOM_FIELD_REGISTRY[field.code] || {}).render === 'faq'
+        );
+        const faqPairs = faqField ? parseQaPairs(faqField.value) : [];
+
         return {
             "page_item_url": slug,
             "data": {
@@ -149,7 +261,16 @@ return `
                 "requirements": tour.requirements || "",
                 "knowBeforeYouGo": tour.attention || tour.knowBeforeYouGo || "",
                 "itinerary": formatItinerary(tour.itinerary || tour.agendaItems),
-                
+
+                // FAQ (Bokun custom field Field101)
+                "faq": formatFaq(faqPairs),                  // rendered HTML for the page
+                "faqLabel": faqField ? faqField.label : "",  // section heading, e.g. "FAQ"
+                "faqCount": faqPairs.length,                 // 0 = hide the section in Duda
+                "faqSchema": buildFaqSchema(faqPairs),       // schema.org FAQPage JSON-LD
+
+                // Every custom field, generic passthrough (code + label + raw value)
+                "customFields": describedCustomFields,
+
                 "inclusions": [],
                 "exclusions": [],
                 "knowBeforeYouGoItems": [], 

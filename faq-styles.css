@@ -1,0 +1,130 @@
+/* ---------------------------------------------------------------------------
+   FAQ accordion — Arabian Wanderers
+   Paste into: Duda > that section > Custom CSS > GENERAL CSS FOR ALL DEVICES
+
+   Pairs with the `faq` field from /api/collection. Markup contract:
+
+     <div class="faq-list">
+       <details class="faq-item" name="faq-accordion">
+         <summary class="faq-question">Question?</summary>
+         <div class="faq-answer"><p>Answer</p></div>
+       </details>
+     </div>
+
+   IMPORTANT — leave the FAQ element's typography ALONE in Duda's design panel.
+   Duda auto-generates `*#dm *.dmBody div.u_XXXXX p { ... !important }` rules for
+   any element you style there. Those are ID-level + !important, so they outrank
+   these class rules and would override the accordion. This file already sets the
+   same brand typography the itinerary uses ('Be Vietnam' / 27px / black), so the
+   design panel is not needed.
+
+   !important is used below only where it must survive Duda's theme defaults.
+--------------------------------------------------------------------------- */
+
+.faq-list {
+  --faq-divider: rgba(0, 0, 0, 0.12);  /* set to your teal for a branded rule */
+  --faq-text: rgba(0, 0, 0, 1);
+  --faq-font: 'Be Vietnam', sans-serif;
+  --faq-row-padding: 18px;
+
+  font-family: var(--faq-font) !important;
+  color: var(--faq-text) !important;
+  text-align: left;
+}
+
+/* --- Row --- */
+.faq-list .faq-item {
+  border-bottom: 1px solid var(--faq-divider);
+}
+
+/* --- Question (the clickable heading) --- */
+.faq-list .faq-question {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+
+  padding: var(--faq-row-padding) 0;
+  cursor: pointer;
+
+  font-family: var(--faq-font) !important;
+  font-size: 18px !important;
+  font-weight: 700 !important;   /* beats the theme's inherited 400 */
+  line-height: 27px !important;
+  color: var(--faq-text) !important;
+  text-transform: none !important;
+  letter-spacing: normal !important;
+
+  list-style: none;              /* Firefox: hide native triangle */
+}
+
+/* Chrome / Safari: hide native triangle */
+.faq-list .faq-question::-webkit-details-marker { display: none; }
+.faq-list .faq-question::marker { content: ''; }
+
+/* --- Chevron, drawn in CSS so there is no icon dependency --- */
+.faq-list .faq-question::after {
+  content: '';
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(45deg) translateY(-2px);
+  transition: transform 0.2s ease;
+}
+
+.faq-list .faq-item[open] > .faq-question::after {
+  transform: rotate(-135deg) translateY(-1px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .faq-list .faq-question::after { transition: none; }
+}
+
+/* Keyboard accessibility */
+.faq-list .faq-question:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
+}
+
+/* --- Answer: same typography as the itinerary body --- */
+.faq-list .faq-answer {
+  padding: 0 0 20px;
+}
+
+.faq-list .faq-answer p,
+.faq-list .faq-answer li {
+  font-family: var(--faq-font) !important;
+  font-weight: 400 !important;
+  line-height: 27px !important;
+  color: var(--faq-text) !important;
+  text-transform: none !important;
+  text-shadow: none !important;
+  letter-spacing: normal !important;
+  font-style: normal !important;
+}
+
+.faq-list .faq-answer > :first-child { margin-top: 0; }
+.faq-list .faq-answer > :last-child  { margin-bottom: 0; }
+
+.faq-list .faq-answer p  { margin: 0 0 12px; }
+.faq-list .faq-answer ul,
+.faq-list .faq-answer ol { margin: 0 0 12px; padding-left: 20px; }
+.faq-list .faq-answer li { margin: 0 0 6px; }
+.faq-list .faq-answer a  { color: inherit; text-decoration: underline; }
+
+/* --- Mobile --- */
+@media (max-width: 600px) {
+  .faq-list {
+    --faq-row-padding: 15px;
+  }
+  .faq-list .faq-question {
+    font-size: 16px !important;
+    line-height: 24px !important;
+  }
+  .faq-list .faq-answer p,
+  .faq-list .faq-answer li {
+    line-height: 25px !important;
+  }
+}

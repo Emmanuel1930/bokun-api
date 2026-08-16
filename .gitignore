@@ -1,0 +1,17 @@
+# --- Secrets: never commit ---
+.env
+.env.*
+env.local
+env.*.local
+*.pem
+
+# --- Local Bokun payload dumps (probing only) ---
+product-*.json
+customfields-survey.json
+probe-*.json
+
+# --- Deps / build / tooling ---
+node_modules/
+.vercel
+.DS_Store
+npm-debug.log*
