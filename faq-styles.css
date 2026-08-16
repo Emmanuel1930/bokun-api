@@ -30,11 +30,13 @@
   color: var(--faq-text) !important;
   text-transform: none !important;
   letter-spacing: normal !important;
-  list-style: none;                       /* Firefox marker */
+  list-style: none !important;
 }
 
-.faq-list .faq-question::-webkit-details-marker { display: none; }
-.faq-list .faq-question::marker { content: ''; }
+/* Kill the native marker and any chevron Duda's theme adds to summary elements. */
+.faq-list .faq-question::-webkit-details-marker { display: none !important; }
+.faq-list .faq-question::marker { content: '' !important; }
+.faq-list .faq-question::before { content: none !important; display: none !important; }
 
 .faq-list .faq-question:hover { opacity: 0.72; }
 .faq-list .faq-question:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
