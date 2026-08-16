@@ -108,15 +108,18 @@ return `
     return pairs.filter(p => p.question);
   };
 
-  // Divs/h3 because Duda's Text Block strips <details> and the answers inside it; "" when empty so the block can hide.
-  const formatFaq = (pairs) => {
+  // CSS-only :target accordion - Duda's Text Block allows no scripts, and anchors survive its tag whitelist.
+  const formatFaq = (pairs, productId) => {
     if (!pairs.length) return "";
 
-    const items = pairs.map(pair => `
-    <div class="faq-item">
-        <h3 class="faq-question">${escapeHtml(pair.question)}</h3>
+    const items = pairs.map((pair, i) => {
+      const id = `faq-${productId || 'x'}-${i + 1}`;
+      return `
+    <div class="faq-item" id="${id}">
+        <h3 class="faq-question"><a class="faq-open" href="#${id}">${escapeHtml(pair.question)}</a><a class="faq-close" href="#faq-closed" aria-label="Close"></a></h3>
         <div class="faq-answer">${pair.answerHtml}</div>
-    </div>`).join('');
+    </div>`;
+    }).join('');
 
     return `<div class="faq-list">${items}
 </div>`;
@@ -250,7 +253,7 @@ return `
                 "itinerary": formatItinerary(tour.itinerary || tour.agendaItems),
 
                 // FAQ (Bokun custom field Field101)
-                "faq": formatFaq(faqPairs),                  // rendered HTML for the page
+                "faq": formatFaq(faqPairs, tour.id),                  // rendered HTML for the page
                 "faqLabel": faqField ? faqField.label : "",  // section heading, e.g. "FAQ"
                 "faqCount": faqPairs.length,                 // 0 = hide the section in Duda
                 "faqSchema": buildFaqSchema(faqPairs),       // schema.org FAQPage JSON-LD
