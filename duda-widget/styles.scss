@@ -1,0 +1,109 @@
+// Paste into Widget Builder > Code > Css/Scss. Values mirror the itinerary block's typography.
+
+.aw-faq {
+  $font: 'Be Vietnam', sans-serif;
+  $text: rgba(0, 0, 0, 1);
+  $divider: rgba(0, 0, 0, 0.12);   // rgba(26,77,77,.25) for brand teal
+  $row-padding: 18px;
+
+  font-family: $font;
+  color: $text;
+  text-align: left;
+
+  &__heading {
+    margin: 0 0 18px;
+    font-family: $font;
+    font-size: 30px;
+    font-weight: 700;
+    line-height: 1.25;
+    color: $text;
+  }
+
+  &.is-empty,
+  &:has(.aw-faq__list:empty) { display: none; }
+
+  &.is-loading .aw-faq__list { min-height: 60px; opacity: 0.4; }
+
+  .faq-item { border-bottom: 1px solid $divider; }
+
+  .faq-question {
+    margin: 0;
+    font-family: $font;
+    font-size: 18px;
+    font-weight: 700;
+    line-height: 27px;
+    color: $text;
+  }
+
+  // Before JS runs the answers are visible, which keeps them readable if the script fails.
+  .faq-answer { padding: 0 0 20px; }
+
+  &__toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    width: 100%;
+    padding: $row-padding 0;
+    margin: 0;
+    background: none;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    cursor: pointer;
+    text-align: left;
+    font: inherit;
+    color: inherit;
+
+    &:hover { opacity: 0.72; }
+    &:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+  }
+
+  &__chevron {
+    flex: 0 0 auto;
+    width: 9px;
+    height: 9px;
+    border-right: 2px solid currentColor;
+    border-bottom: 2px solid currentColor;
+    transform: rotate(45deg) translateY(-2px);
+    transition: transform 0.25s ease;
+  }
+
+  .is-open .aw-faq__chevron { transform: rotate(-135deg) translateY(-1px); }
+
+  // Enhanced state: panels collapse and animate.
+  .is-enhanced {
+    .faq-question { padding: 0; }
+
+    .faq-answer {
+      overflow: hidden;
+      max-height: 0;
+      padding: 0;
+      transition: max-height 0.3s ease, padding 0.3s ease;
+    }
+
+    .faq-item.is-open .faq-answer { padding: 0 0 20px; }
+  }
+
+  .faq-answer {
+    p, li {
+      font-family: $font;
+      font-weight: 400;
+      line-height: 27px;
+      color: $text;
+    }
+
+    > :first-child { margin-top: 0; }
+    > :last-child  { margin-bottom: 0; }
+
+    p  { margin: 0 0 12px; }
+    ul, ol { margin: 0 0 12px; padding-left: 20px; }
+    li { margin: 0 0 6px; }
+    a  { color: inherit; text-decoration: underline; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .aw-faq__chevron { transition: none; }
+    .is-enhanced .faq-answer { transition: none; }
+  }
+}

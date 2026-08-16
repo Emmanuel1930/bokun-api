@@ -317,9 +317,15 @@ return `
         };
     });
 
+    // ?id= returns just that product, so a widget need not download the whole catalogue.
+    const wantedId = req.query && (req.query.id || req.query.productId);
+    const payload = wantedId
+      ? dudaCollection.filter(item => String(item.data.id) === String(wantedId))
+      : dudaCollection;
+
     // s-maxage=3600 caches the response
     res.setHeader('Cache-Control', 'public, s-maxage=3600, stale-while-revalidate=1209600');
-    res.status(200).json(dudaCollection);
+    res.status(200).json(payload);
 
   } catch (error) {
     console.error("Collection Error:", error);

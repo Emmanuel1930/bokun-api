@@ -1,0 +1,13 @@
+// Paste into Widget Builder > Code > Mobile.Scss.
+
+.aw-faq {
+  &__heading { font-size: 24px; margin-bottom: 14px; }
+
+  &__toggle { padding: 15px 0; }
+
+  .faq-question { font-size: 16px; line-height: 24px; }
+
+  .faq-answer {
+    p, li { line-height: 25px; }
+  }
+}
