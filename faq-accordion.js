@@ -1,26 +1,10 @@
-/* ---------------------------------------------------------------------------
-   FAQ accordion behaviour — Arabian Wanderers
-
-   Paste into: Duda > Site Settings > Custom Code > Body End (wrapped in <script>).
-   Add it ONCE for the whole site, not per page.
-
-   Progressive enhancement, deliberately:
-   the server sends every question AND answer as plain HTML, so a crawler (and any
-   visitor without JS) sees the full text. This script only adds the collapse
-   behaviour on top. If it fails to load, the FAQ degrades to a readable Q&A list
-   rather than disappearing.
-
-   Pairs with faq-styles.css, which keeps answers visible until `faq-js` is set.
---------------------------------------------------------------------------- */
+/* FAQ accordion behaviour. Answers ship in the HTML already - this only adds collapsing, so no JS still reads fine. */
 (function () {
   'use strict';
 
-  var LIST = '.faq-list';
-  var READY = 'data-faq-ready';
-
   function enhance(list) {
-    if (list.hasAttribute(READY)) return;
-    list.setAttribute(READY, '');
+    if (list.hasAttribute('data-faq-ready')) return;
+    list.setAttribute('data-faq-ready', '');
     list.classList.add('faq-js');
 
     var items = list.querySelectorAll('.faq-item');
@@ -32,11 +16,11 @@
 
       var uid = 'faq-' + Date.now().toString(36) + '-' + i;
 
-      // Wrap the heading text in a real button: keyboard, screen readers and
-      // browser find-in-page all behave correctly, and the h3 stays an h3.
+      // A real button inside the h3: keyboard and screen readers work, the h3 stays an h3.
       var button = document.createElement('button');
       button.type = 'button';
       button.className = 'faq-toggle';
+      button.id = uid + '-label';
       button.setAttribute('aria-expanded', 'false');
       button.setAttribute('aria-controls', uid);
       button.innerHTML = heading.innerHTML;
@@ -46,13 +30,12 @@
 
       answer.id = uid;
       answer.setAttribute('role', 'region');
-      answer.setAttribute('aria-labelledby', uid + '-label');
-      button.id = uid + '-label';
+      answer.setAttribute('aria-labelledby', button.id);
 
       button.addEventListener('click', function () {
         var isOpen = item.classList.contains('is-open');
 
-        // One open at a time, matching the client's reference design.
+        // One open at a time.
         Array.prototype.forEach.call(items, function (other) {
           if (other === item) return;
           other.classList.remove('is-open');
@@ -67,8 +50,7 @@
   }
 
   function init() {
-    var lists = document.querySelectorAll(LIST);
-    Array.prototype.forEach.call(lists, enhance);
+    Array.prototype.forEach.call(document.querySelectorAll('.faq-list'), enhance);
   }
 
   if (document.readyState === 'loading') {
@@ -77,12 +59,10 @@
     init();
   }
 
-  // Duda renders dynamic-page content asynchronously in some templates, so watch
-  // for a .faq-list that arrives after first paint.
+  // Duda renders some dynamic-page content after first paint; stop watching once settled.
   if (window.MutationObserver) {
-    var observer = new MutationObserver(function () { init(); });
+    var observer = new MutationObserver(init);
     observer.observe(document.documentElement, { childList: true, subtree: true });
-    // Stop watching once the page has settled; the FAQ is server-rendered.
     setTimeout(function () { observer.disconnect(); }, 10000);
   }
 })();

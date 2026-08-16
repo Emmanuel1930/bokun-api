@@ -1,31 +1,9 @@
-/* ---------------------------------------------------------------------------
-   FAQ accordion — Arabian Wanderers
-   Paste into: Duda > that section > Custom CSS > GENERAL CSS FOR ALL DEVICES
-
-   Pairs with the `faq` field from /api/collection and with faq-accordion.js.
-   Markup contract:
-
-     <div class="faq-list">
-       <div class="faq-item">
-         <h3 class="faq-question">Question?</h3>
-         <div class="faq-answer"><p>Answer</p></div>
-       </div>
-     </div>
-
-   PROGRESSIVE ENHANCEMENT — the default state below is fully EXPANDED. The
-   collapsed styles apply only under `.faq-js`, which faq-accordion.js adds at
-   runtime. So without JS (and for any crawler that ignores it) the complete Q&A
-   is visible, which is what keeps the JSON-LD honest.
-
-   IMPORTANT — leave the FAQ element's typography ALONE in Duda's design panel.
-   Duda auto-generates `*#dm *.dmBody div.u_XXXXX p { ... !important }` rules for
-   any element you style there. Those are ID-level + !important, so they outrank
-   these class rules. This file already sets the brand typography the itinerary
-   uses ('Be Vietnam' / 27px / black), so the design panel is not needed.
---------------------------------------------------------------------------- */
+/* FAQ accordion - paste into the FAQ element's Custom CSS > General CSS for all devices.
+   Default state is expanded; collapsing only kicks in under .faq-js, so the Q&A stays readable without JS.
+   Do not style this element in Duda's design panel - its generated u_XXXXX !important rules outrank these. */
 
 .faq-list {
-  --faq-divider: rgba(0, 0, 0, 0.12);  /* try rgba(26,77,77,.25) for brand teal */
+  --faq-divider: rgba(0, 0, 0, 0.12);   /* rgba(26,77,77,.25) for brand teal */
   --faq-text: rgba(0, 0, 0, 1);
   --faq-font: 'Be Vietnam', sans-serif;
   --faq-row-padding: 18px;
@@ -35,12 +13,8 @@
   text-align: left;
 }
 
-/* --- Row --- */
-.faq-list .faq-item {
-  border-bottom: 1px solid var(--faq-divider);
-}
+.faq-list .faq-item { border-bottom: 1px solid var(--faq-divider); }
 
-/* --- Question --- */
 .faq-list .faq-question {
   margin: 0 !important;
   padding: 0 !important;
@@ -53,12 +27,10 @@
   letter-spacing: normal !important;
 }
 
-/* Static (no-JS) spacing. Overridden once the button exists. */
-.faq-list:not(.faq-js) .faq-question {
-  padding: var(--faq-row-padding) 0 6px !important;
-}
+/* Spacing for the no-JS fallback, where no button exists. */
+.faq-list:not(.faq-js) .faq-question { padding: var(--faq-row-padding) 0 6px !important; }
 
-/* --- The button the script injects inside the h3 --- */
+/* The button faq-accordion.js injects inside the h3. */
 .faq-list .faq-toggle {
   display: flex;
   align-items: center;
@@ -67,31 +39,22 @@
   width: 100%;
   padding: var(--faq-row-padding) 0;
   margin: 0;
-
   background: none;
   border: 0;
   border-radius: 0;
   box-shadow: none;
   cursor: pointer;
   text-align: left;
-
-  font-family: inherit !important;
-  font-size: inherit !important;
-  font-weight: inherit !important;
-  line-height: inherit !important;
+  font: inherit !important;
   color: inherit !important;
   text-transform: none !important;
   letter-spacing: normal !important;
 }
 
 .faq-list .faq-toggle:hover { opacity: 0.72; }
+.faq-list .faq-toggle:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
 
-.faq-list .faq-toggle:focus-visible {
-  outline: 2px solid currentColor;
-  outline-offset: 3px;
-}
-
-/* --- Chevron, drawn in CSS so there is no icon dependency --- */
+/* Chevron, drawn in CSS so there is no icon dependency. */
 .faq-list .faq-toggle::after {
   content: '';
   flex: 0 0 auto;
@@ -103,21 +66,11 @@
   transition: transform 0.25s ease;
 }
 
-.faq-list .faq-item.is-open .faq-toggle::after {
-  transform: rotate(-135deg) translateY(-1px);
-}
+.faq-list .faq-item.is-open .faq-toggle::after { transform: rotate(-135deg) translateY(-1px); }
 
-/* --- Answer --- */
-.faq-list .faq-answer {
-  padding: 0 0 20px;
-}
-
-/* Collapsed ONLY once the script has run. */
+.faq-list .faq-answer { padding: 0 0 20px; }
 .faq-list.faq-js .faq-answer { display: none; }
-.faq-list.faq-js .faq-item.is-open .faq-answer {
-  display: block;
-  animation: faq-reveal 0.25s ease;
-}
+.faq-list.faq-js .faq-item.is-open .faq-answer { display: block; animation: faq-reveal 0.25s ease; }
 
 @keyframes faq-reveal {
   from { opacity: 0; transform: translateY(-4px); }
@@ -129,7 +82,7 @@
   .faq-list.faq-js .faq-item.is-open .faq-answer { animation: none; }
 }
 
-/* --- Answer typography: matches the itinerary body --- */
+/* Answer typography matches the itinerary body. */
 .faq-list .faq-answer p,
 .faq-list .faq-answer li {
   font-family: var(--faq-font) !important;
@@ -144,23 +97,15 @@
 
 .faq-list .faq-answer > :first-child { margin-top: 0; }
 .faq-list .faq-answer > :last-child  { margin-bottom: 0; }
-
 .faq-list .faq-answer p  { margin: 0 0 12px; }
 .faq-list .faq-answer ul,
 .faq-list .faq-answer ol { margin: 0 0 12px; padding-left: 20px; }
 .faq-list .faq-answer li { margin: 0 0 6px; }
 .faq-list .faq-answer a  { color: inherit; text-decoration: underline; }
 
-/* --- Mobile --- */
 @media (max-width: 600px) {
   .faq-list { --faq-row-padding: 15px; }
-
-  .faq-list .faq-question {
-    font-size: 16px !important;
-    line-height: 24px !important;
-  }
+  .faq-list .faq-question { font-size: 16px !important; line-height: 24px !important; }
   .faq-list .faq-answer p,
-  .faq-list .faq-answer li {
-    line-height: 25px !important;
-  }
+  .faq-list .faq-answer li { line-height: 25px !important; }
 }

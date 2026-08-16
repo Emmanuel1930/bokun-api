@@ -55,15 +55,12 @@ return `
     }).join('');
   };
 
-  // --- CUSTOM FIELD REGISTRY ---
-  // Bokun returns title:null, so the label lives here, keyed by code.
-  // Unregistered fields still pass through in the generic `customFields` array.
+  // Bokun returns title:null, so labels live here keyed by code; unregistered fields still pass through in `customFields`.
   const CUSTOM_FIELD_REGISTRY = {
     Field101: { label: 'FAQ', render: 'faq' }
   };
 
-  // --- HELPER: HTML ENTITY DECODE / ESCAPE ---
-  // Bokun's rich text is entity-encoded; JSON-LD needs plain chars, HTML needs them back.
+  // Bokun rich text is entity-encoded; JSON-LD needs plain chars, HTML needs them back.
   const NAMED_ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
 
   const decodeEntities = (text) => String(text)
@@ -78,9 +75,7 @@ return `
   const stripTags = (html) => decodeEntities(String(html).replace(/<[^>]*>/g, ' '))
     .replace(/\s+/g, ' ').trim();
 
-  // --- HELPER: PARSE Q&A PAIRS OUT OF THE FAQ HTML ---
-  // Bokun sends one flat HTML blob. A fully-bold block (or heading) opens a question;
-  // following blocks are its answer until the next question. Empty <p></p> are spacers.
+  // Bokun sends one flat blob: a fully-bold block or heading opens a question, blocks after it are the answer.
   const BLOCK_RE = /<(p|h[1-6]|ul|ol|div|blockquote)\b[^>]*>([\s\S]*?)<\/\1>/gi;
   const FULLY_BOLD_RE = /^\s*(?:<(?:strong|b)\b[^>]*>[\s\S]*?<\/(?:strong|b)>\s*)+$/i;
 
@@ -103,7 +98,7 @@ return `
         if (current) pairs.push(current);
         current = { question: text, answerHtml: '', answerText: '' };
       } else if (current) {
-        // Re-wrapped bare, which drops Bokun's inline styles so site CSS wins.
+        // Re-wrapped bare, dropping Bokun's inline styles so site CSS wins.
         current.answerHtml += `<${tag}>${inner}</${tag}>`;
         current.answerText += (current.answerText ? ' ' : '') + text;
       }
@@ -113,17 +108,7 @@ return `
     return pairs.filter(p => p.question);
   };
 
-  // --- HELPER: FORMAT FAQ INTO HTML ---
-  // Like formatItinerary: structure + class hooks only, styling lives in Duda's CSS.
-  //
-  // Plain divs and headings on purpose. Duda's Text Block sanitizes unknown tags, so
-  // <details>/<summary> get stripped along with the answers inside them - which leaves
-  // the answers out of the page HTML entirely, breaking both the crawlability
-  // requirement and the JSON-LD match. These tags survive sanitizing, so the full Q&A
-  // is always in the page; faq-accordion.js layers the collapse behaviour on top.
-  //
-  // Questions are h3 so they nest under the page's "Frequently Asked Questions" h2.
-  // Returns "" when there are no pairs so the Duda block can be hidden, never "null".
+  // Divs/h3 because Duda's Text Block strips <details> and the answers inside it; "" when empty so the block can hide.
   const formatFaq = (pairs) => {
     if (!pairs.length) return "";
 
@@ -137,9 +122,7 @@ return `
 </div>`;
   };
 
-  // --- HELPER: BUILD schema.org FAQPage JSON-LD ---
-  // Bare JSON string for <script type="application/ld+json">{{faqSchema}}</script>.
-  // `<` escaped so answer markup can never terminate that script tag early.
+  // Bare JSON for <script type="application/ld+json">; `<` escaped so answer markup can't close the tag early.
   const buildFaqSchema = (pairs) => {
     if (!pairs.length) return "";
 
