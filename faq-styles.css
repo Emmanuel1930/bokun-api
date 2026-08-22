@@ -49,9 +49,28 @@
   color: inherit !important;
   text-transform: none !important;
   letter-spacing: normal !important;
+  -webkit-tap-highlight-color: transparent;
 }
 
-.faq-list .faq-toggle:hover { opacity: 0.72; }
+/* Duda's theme recolours buttons on hover/focus/active - pin every state back to the question colour. */
+.faq-list .faq-toggle,
+.faq-list .faq-toggle:hover,
+.faq-list .faq-toggle:focus,
+.faq-list .faq-toggle:active,
+.faq-list .faq-toggle:visited,
+.faq-list .faq-item.is-open .faq-toggle {
+  color: var(--faq-text) !important;
+  background: none !important;
+  box-shadow: none !important;
+  text-decoration: none !important;
+  opacity: 1 !important;
+}
+
+/* Fade on real pointers only, so a tap does not leave the row stuck faded on mobile. */
+@media (hover: hover) and (pointer: fine) {
+  .faq-list .faq-toggle:hover { opacity: 0.72 !important; }
+}
+
 .faq-list .faq-toggle:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
 
 /* Chevron, drawn in CSS so there is no icon dependency. */
